@@ -1686,14 +1686,7 @@ const getSettings = async (req, res) => {
 const updateSetting = async (req, res) => {
   try {
     const { setting_key, setting_value } = req.body;
-
-    // Validate setting_value type
-    // if (typeof setting_value !== 'boolean' && typeof setting_value !== 'number') {
-    //   return res.status(400).json({
-    //     status: 'error',
-    //     message: 'Invalid setting_value: must be a boolean or number'
-    //   });
-    // }
+ 
 
     const { data: updatedSetting, error } = await supabaseAdmin
       .from('platform_settings')
@@ -1931,80 +1924,7 @@ const getTopEarners = async (req, res) => {
   }
 };
 
-const getTopVoxskitWatchers = async (req, res) => {
-  try {
-    // Get top 10 users who watched most VoxSkit videos
-    const { data: topWatchers, error } = await supabaseAdmin
-      .rpc('get_top_voxskit_watchers', { limit_count: 10 });
-
-    if (error) {
-      // Fallback: Manual query if RPC doesn't exist
-      const { data: claimCounts } = await supabaseAdmin
-        .from('voxskit_user_claims')
-        .select('user_id, users!inner(username, user_tier), wallets!inner(voxcoin_balance)');
-
-      // Group by user and count claims
-      const userClaimMap = {};
-      claimCounts?.forEach(claim => {
-        if (!userClaimMap[claim.user_id]) {
-          userClaimMap[claim.user_id] = {
-            user_id: claim.user_id,
-            username: claim.users.username,
-            user_tier: claim.users.user_tier,
-            voxcoin_balance: claim.wallets.voxcoin_balance,
-            videos_watched: 0
-          };
-        }
-        userClaimMap[claim.user_id].videos_watched += 1;
-      });
-
-      // Convert to array and sort
-      const sortedWatchers = Object.values(userClaimMap)
-        .sort((a, b) => b.videos_watched - a.videos_watched)
-        .slice(0, 10)
-        .map((watcher, index) => ({
-          rank: index + 1,
-          username: watcher.username,
-          user_tier: watcher.user_tier,
-          videos_watched: watcher.videos_watched,
-          voxcoin_balance: parseFloat(watcher.voxcoin_balance)
-        }));
-
-      return res.status(200).json({
-        status: 'success',
-        message: 'Top VoxSkit watchers retrieved successfully',
-        data: {
-          top_watchers: sortedWatchers
-        }
-      });
-    }
-
-    // Format RPC response
-    const formattedWatchers = topWatchers?.map((watcher, index) => ({
-      rank: index + 1,
-      username: watcher.username,
-      user_tier: watcher.user_tier,
-      videos_watched: watcher.videos_watched,
-      voxcoin_balance: parseFloat(watcher.voxcoin_balance)
-    })) || [];
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Top VoxSkit watchers retrieved successfully',
-      data: {
-        top_watchers: formattedWatchers
-      }
-    });
-
-  } catch (error) {
-    console.error('Get top VoxSkit watchers error:', error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Internal server error'
-    });
-  }
-};
-
+ 
 
 module.exports = {
   // User Management
@@ -2031,5 +1951,4 @@ module.exports = {
 
    // Public Leaderboards
   getTopEarners,
-  getTopVoxskitWatchers
 };

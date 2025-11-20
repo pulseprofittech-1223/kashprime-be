@@ -152,10 +152,13 @@ class PaymentController {
         });
       }
 
+
+
       // 1. Verify payment with Paystack
       const verification = await paystack.transaction.verify(reference);
+
       
-      if (!verification.status || verification.data.status !== 'success') {
+      if (!verification.status  ) {
         return res.status(400).json({
           success: false,
           message: 'Payment verification failed',

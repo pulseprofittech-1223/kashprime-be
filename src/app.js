@@ -6,7 +6,7 @@ const rateLimit = require("express-rate-limit");
 
 const authRoutes = require("./routes/auth.routes");
 const userRoutes = require("./routes/user.routes");
-// const codesRoutes = require("./routes/codes.routes");
+const investmentsRoutes = require("./routes/investment.routes");
 // const socialRoutes = require("./routes/social.routes");
 // const voxfeedRoutes = require("./routes/voxfeed.routes");
 // const jobsRoutes = require("./routes/jobs.routes");
@@ -19,7 +19,7 @@ const voxskitRoutes = require("./routes/voxskit.routes");
 // const raffleRoutes = require("./routes/raffle.routes");
 // const minesRoutes = require("./routes/mines.routes");
 // const coinflipRoutes = require("./routes/coinflip.routes");
-// const gamesRoutes = require("./routes/gaming.routes");
+const gamesRoutes = require("./routes/gaming.routes");
 const paymentRoutes = require("./routes/payments.routes");
 const sponsoredPostRoutes = require("./routes/sponsored.posts.routes");
 
@@ -77,7 +77,7 @@ app.get("/health", (req, res) => {
 // API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
-// app.use("/api/codes", codesRoutes);
+app.use("/api/investments", investmentsRoutes);
 // app.use("/api/social", socialRoutes);
 // app.use("/api/voxfeed", voxfeedRoutes);
 // app.use("/api/jobs", jobsRoutes);
@@ -90,7 +90,7 @@ app.use("/api/voxskit", voxskitRoutes);
 // app.use("/api/lucky-jet", luckyJetRoutes);
 // app.use("/api/mines", minesRoutes);
 // app.use("/api/coinflip", coinflipRoutes);
-// app.use("/api/games", gamesRoutes);
+app.use("/api/games", gamesRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/sponsored-posts', sponsoredPostRoutes);
 
