@@ -36,7 +36,7 @@ app.use(
       "http://localhost:5175",
       "http://localhost:5174",
       "http://localhost:3000",
-      "http://localhost:9091","http://127.0.0.1:5500",
+      "https://kashprime.netlify.app","http://127.0.0.1:5500",
       process.env.FRONTEND_URL,
       process.env.FRONTEND_URL2,
       process.env.FRONTEND_URL3,
