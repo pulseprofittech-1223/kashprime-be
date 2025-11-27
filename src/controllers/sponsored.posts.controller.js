@@ -2,6 +2,120 @@ const { supabaseAdmin } = require("../services/supabase.service");
 const { validationResult } = require("express-validator");
 const messages = require("../utils/constants/voxfeed");
 
+// Get daily status for sponsored posts
+const getDailyStatus = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Check if sponsored posts enabled
+    const { data: enabledSetting } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_value')
+      .eq('setting_key', 'sponsored_enabled')
+      .single();
+
+    if (enabledSetting?.setting_value === 'false') {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Sponsored Posts feature is currently disabled'
+      });
+    }
+
+    // Get user tier
+    const { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('user_tier')
+      .eq('id', userId)
+      .single();
+
+    if (userError || !user) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'User not found'
+      });
+    }
+
+    // Get daily limits from platform settings
+    const isPaidUser = ['Amateur', 'Pro'].includes(user.user_tier);
+    const limitKey = isPaidUser ? 'sponsored_daily_limit_paid' : 'sponsored_daily_limit_free';
+    const rewardKey = isPaidUser ? 'sponsored_reward_paid' : 'sponsored_reward_free';
+
+    const { data: limitSetting } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_value')
+      .eq('setting_key', limitKey)
+      .single();
+
+    const { data: rewardSetting } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_value')
+      .eq('setting_key', rewardKey)
+      .single();
+
+    const dailyLimit = parseInt(limitSetting?.setting_value || (isPaidUser ? 5 : 3));
+    const rewardAmount = parseFloat(rewardSetting?.setting_value || (isPaidUser ? 1000 : 500));
+
+    // Get today's engagements
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const { data: todayEngagements, error: engagementError } = await supabaseAdmin
+      .from('sponsored_engagements')
+      .select('id, post_id, reward_amount, created_at')
+      .eq('user_id', userId)
+      .gte('created_at', todayStart.toISOString());
+
+    if (engagementError) {
+      console.error('Engagement fetch error:', engagementError);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Failed to fetch engagement data'
+      });
+    }
+
+    const engagedCount = todayEngagements?.length || 0;
+    const remainingEngagements = Math.max(0, dailyLimit - engagedCount);
+    const totalEarnedToday = todayEngagements?.reduce((sum, e) => sum + parseFloat(e.reward_amount), 0) || 0;
+
+    // Get list of post IDs user has already engaged with (all time)
+    const { data: allEngagements } = await supabaseAdmin
+      .from('sponsored_engagements')
+      .select('post_id')
+      .eq('user_id', userId);
+
+    const engagedPostIds = allEngagements?.map(e => e.post_id) || [];
+
+    // Calculate next reset time (midnight)
+    const nextResetTime = new Date();
+    nextResetTime.setHours(24, 0, 0, 0);
+
+    res.json({
+      status: 'success',
+      message: 'Daily status retrieved successfully',
+      data: {
+        user_tier: user.user_tier,
+        daily_limit: dailyLimit,
+        engaged_today: engagedCount,
+        remaining_engagements: remainingEngagements,
+        reward_per_post: rewardAmount,
+        total_earned_today: totalEarnedToday,
+        potential_earnings: remainingEngagements * rewardAmount,
+        can_engage: remainingEngagements > 0,
+        engaged_post_ids: engagedPostIds,
+        next_reset_time: nextResetTime.toISOString(),
+        today_engagements: todayEngagements || []
+      }
+    });
+
+  } catch (error) {
+    console.error('Get daily status error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Internal server error'
+    });
+  }
+};
+
 // Create new sponsored post (Admin only)
 const createPost = async (req, res) => {
   try {
@@ -26,7 +140,7 @@ const createPost = async (req, res) => {
           featured_image: req.file ? req.file.path : null,
           link1: req.body.link1 || null,
           link2: req.body.link2 || null,
-          status: "published", // Direct publication, no approval needed
+          status: "published",
           is_published: true,
           published_at: new Date().toISOString(),
         },
@@ -49,7 +163,6 @@ const createPost = async (req, res) => {
       });
     }
 
-    // Log admin activity
     await supabaseAdmin.from("admin_activities").insert([
       {
         admin_id: adminId,
@@ -152,12 +265,10 @@ const getPublishedPosts = async (req, res) => {
       .eq("status", "published")
       .eq("is_published", true);
 
-    // Search functionality
     if (search) {
       query = query.or(`title.ilike.%${search}%, content.ilike.%${search}%`);
     }
 
-    // Sorting
     switch (sort) {
       case "popular":
         query = query.order("view_count", { ascending: false });
@@ -235,7 +346,6 @@ const getPostById = async (req, res) => {
       });
     }
 
-    // Increment view count
     await supabaseAdmin
       .from("sponsored_posts")
       .update({ view_count: (data.view_count || 0) + 1 })
@@ -272,17 +382,14 @@ const updatePost = async (req, res) => {
     const { id } = req.params;
     const adminId = req.user.id;
 
-    // Remove undefined values
     const cleanData = Object.fromEntries(
       Object.entries(req.body).filter(([_, v]) => v !== undefined)
     );
 
-    // Add featured image if uploaded
     if (req.file) {
       cleanData.featured_image = req.file.path;
     }
 
-    // Add updated timestamp
     cleanData.updated_at = new Date().toISOString();
 
     const { data, error } = await supabaseAdmin
@@ -306,7 +413,6 @@ const updatePost = async (req, res) => {
       });
     }
 
-    // Log admin activity
     await supabaseAdmin.from("admin_activities").insert([
       {
         admin_id: adminId,
@@ -339,7 +445,6 @@ const deletePost = async (req, res) => {
     const { id } = req.params;
     const adminId = req.user.id;
 
-    // Get post to delete associated image from Supabase Storage
     const { data: post } = await supabaseAdmin
       .from("sponsored_posts")
       .select("featured_image, title")
@@ -360,7 +465,6 @@ const deletePost = async (req, res) => {
       });
     }
 
-    // Delete image from Supabase Storage if exists
     if (post?.featured_image && post.featured_image.includes("supabase")) {
       const imagePath = post.featured_image.split("/").pop();
       await supabaseAdmin.storage
@@ -368,7 +472,6 @@ const deletePost = async (req, res) => {
         .remove([`sponsored/${imagePath}`]);
     }
 
-    // Log admin activity
     await supabaseAdmin.from("admin_activities").insert([
       {
         admin_id: adminId,
@@ -394,7 +497,7 @@ const deletePost = async (req, res) => {
   }
 };
 
- // Engage with sponsored post (reward coins)
+// Engage with sponsored post (reward coins)
 const engagePost = async (req, res) => {
   try {
     const { postId } = req.params;
@@ -445,29 +548,6 @@ const engagePost = async (req, res) => {
       });
     }
 
-    // Check if user has earned today (from ANY post)
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const { data: todayEngagement } = await supabaseAdmin
-      .from('sponsored_engagements')
-      .select('id, post_id, created_at')
-      .eq('user_id', userId)
-      .gte('created_at', todayStart.toISOString())
-      .single();
-
-    if (todayEngagement) {
-      // User already earned today from a different post
-      return res.status(429).json({
-        status: 'error',
-        message: 'You have already earned from a sponsored post today. Come back tomorrow!',
-        data: {
-          earned_today: true,
-          next_earning_time: new Date(new Date().setHours(24, 0, 0, 0)).toISOString()
-        }
-      });
-    }
-
     // Get user tier
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
@@ -483,10 +563,42 @@ const engagePost = async (req, res) => {
       });
     }
 
-    // Get reward amounts from platform settings
+    // Get daily limit from platform settings
     const isPaidUser = ['Amateur', 'Pro'].includes(user.user_tier);
+    const limitKey = isPaidUser ? 'sponsored_daily_limit_paid' : 'sponsored_daily_limit_free';
     const rewardKey = isPaidUser ? 'sponsored_reward_paid' : 'sponsored_reward_free';
 
+    const { data: limitSetting } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_value')
+      .eq('setting_key', limitKey)
+      .single();
+
+    const dailyLimit = parseInt(limitSetting?.setting_value || (isPaidUser ? 5 : 3));
+
+    // Check if user has reached daily limit
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const { data: todayEngagements, count: todayCount } = await supabaseAdmin
+      .from('sponsored_engagements')
+      .select('id', { count: 'exact' })
+      .eq('user_id', userId)
+      .gte('created_at', todayStart.toISOString());
+
+    if ((todayCount || 0) >= dailyLimit) {
+      return res.status(429).json({
+        status: 'error',
+        message: `You have reached your daily limit of ${dailyLimit} sponsored posts. Come back tomorrow!`,
+        data: {
+          daily_limit: dailyLimit,
+          engaged_today: todayCount,
+          next_reset_time: new Date(new Date().setHours(24, 0, 0, 0)).toISOString()
+        }
+      });
+    }
+
+    // Get reward amount
     const { data: rewardSetting } = await supabaseAdmin
       .from('platform_settings')
       .select('setting_value')
@@ -532,7 +644,6 @@ const engagePost = async (req, res) => {
 
     if (engagementError) {
       console.error('Engagement record error:', engagementError);
-      // Rollback wallet update
       await supabaseAdmin
         .from('wallets')
         .update({ coins_balance: parseFloat(wallet?.coins_balance || 0) })
@@ -544,27 +655,31 @@ const engagePost = async (req, res) => {
       });
     }
 
-    // Update engagement count
-    await supabaseAdmin.rpc('increment_sponsored_engagement_count', {
-      post_id: postId
-    });
+    // Update engagement count on post
+    await supabaseAdmin
+      .from('sponsored_posts')
+      .update({ engagement_count: (post.engagement_count || 0) + 1 })
+      .eq('id', postId);
 
     // Log transaction
     await supabaseAdmin.from('transactions').insert([
       {
         user_id: userId,
-        transaction_type: 'sponsored_post_reward',
+        transaction_type: 'reward',
         balance_type: 'coins_balance',
         amount: rewardAmount,
         status: 'completed',
-        description: `Coins reward - ${post.title}`,
-        reference: `SPONSORED-${Date.now()}-${userId.slice(-4).toUpperCase()}`,
+        description: `Sponsored post reward - ${post.title}`,
+        reference: `SPONSORED_${Date.now()}_${userId.slice(-4).toUpperCase()}`,
         metadata: {
           post_id: postId,
           post_title: post.title
         }
       }
     ]);
+
+    const newEngagedCount = (todayCount || 0) + 1;
+    const remainingEngagements = dailyLimit - newEngagedCount;
 
     res.status(200).json({
       status: 'success',
@@ -577,8 +692,13 @@ const engagePost = async (req, res) => {
           post_id: postId,
           claimed_at: engagement.created_at
         },
-        daily_limit_reached: true,
-        next_earning_time: new Date(new Date().setHours(24, 0, 0, 0)).toISOString()
+        daily_status: {
+          daily_limit: dailyLimit,
+          engaged_today: newEngagedCount,
+          remaining_engagements: remainingEngagements,
+          daily_limit_reached: remainingEngagements <= 0
+        },
+        next_reset_time: new Date(new Date().setHours(24, 0, 0, 0)).toISOString()
       }
     });
   } catch (error) {
@@ -590,13 +710,117 @@ const engagePost = async (req, res) => {
   }
 };
 
+// Check if user can engage with a specific post
+const canEngagePost = async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user.id;
+
+    // Check if post exists
+    const { data: post, error: postError } = await supabaseAdmin
+      .from('sponsored_posts')
+      .select('id, title')
+      .eq('id', postId)
+      .eq('status', 'published')
+      .eq('is_published', true)
+      .single();
+
+    if (postError || !post) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Sponsored post not found'
+      });
+    }
+
+    // Check if already engaged with this post
+    const { data: existingEngagement } = await supabaseAdmin
+      .from('sponsored_engagements')
+      .select('id, created_at, reward_amount')
+      .eq('user_id', userId)
+      .eq('post_id', postId)
+      .single();
+
+    if (existingEngagement) {
+      return res.json({
+        status: 'success',
+        data: {
+          can_engage: false,
+          reason: 'already_engaged',
+          message: 'You have already earned from this post',
+          engaged_at: existingEngagement.created_at,
+          reward_earned: existingEngagement.reward_amount
+        }
+      });
+    }
+
+    // Get user tier and check daily limit
+    const { data: user } = await supabaseAdmin
+      .from('users')
+      .select('user_tier')
+      .eq('id', userId)
+      .single();
+
+    const isPaidUser = ['Amateur', 'Pro'].includes(user?.user_tier);
+    const limitKey = isPaidUser ? 'sponsored_daily_limit_paid' : 'sponsored_daily_limit_free';
+
+    const { data: limitSetting } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_value')
+      .eq('setting_key', limitKey)
+      .single();
+
+    const dailyLimit = parseInt(limitSetting?.setting_value || (isPaidUser ? 5 : 3));
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const { count: todayCount } = await supabaseAdmin
+      .from('sponsored_engagements')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('created_at', todayStart.toISOString());
+
+    if ((todayCount || 0) >= dailyLimit) {
+      return res.json({
+        status: 'success',
+        data: {
+          can_engage: false,
+          reason: 'daily_limit_reached',
+          message: `Daily limit of ${dailyLimit} posts reached`,
+          daily_limit: dailyLimit,
+          engaged_today: todayCount,
+          next_reset_time: new Date(new Date().setHours(24, 0, 0, 0)).toISOString()
+        }
+      });
+    }
+
+    res.json({
+      status: 'success',
+      data: {
+        can_engage: true,
+        daily_limit: dailyLimit,
+        engaged_today: todayCount || 0,
+        remaining_engagements: dailyLimit - (todayCount || 0)
+      }
+    });
+
+  } catch (error) {
+    console.error('Can engage post error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Internal server error'
+    });
+  }
+};
+
 module.exports = {
+  getDailyStatus,
   createPost,
   getAllPosts,
   getPublishedPosts,
   getPostById,
   updatePost,
   deletePost,
- 
   engagePost,
+  canEngagePost
 };

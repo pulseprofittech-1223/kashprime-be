@@ -84,31 +84,9 @@ const bulkProcessValidation = [
  */
 router.get('/plans', authMiddleware, investmentController.getPlans);
 
-/**
- * @route   POST /api/investments/initialize
- * @desc    Initialize investment payment
- * @access  Private
- */
-router.post(
-  '/initialize',
-  authMiddleware,
-  paymentLimiter,
-  initializePaymentValidation,
-  investmentController.initializePayment
-);
+ 
 
-/**
- * @route   POST /api/investments/verify
- * @desc    Verify payment and create investment
- * @access  Private
- */
-router.post(
-  '/verify',
-  authMiddleware,
-  verifyPaymentValidation,
-  investmentController.verifyPayment
-);
-
+ 
 /**
  * @route   GET /api/investments/my-investments
  * @desc    Get user's investments

@@ -532,7 +532,7 @@ const getUserEarnings = async (userId) => {
       .eq('user_id', userId)
       .in('status', ['completed'])
       .in('transaction_type', [
-        'referral_reward', 
+        'reward', 
         'video_reward', 
         'sponsored_post_reward', 
         'game_win', 

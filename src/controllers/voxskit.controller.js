@@ -161,7 +161,7 @@ const claimVideoReward = async (req, res) => {
       .from('transactions')
       .insert({
         user_id: userId,
-        transaction_type: 'video_reward',
+        transaction_type: 'reward',
         balance_type: 'coins_balance',
         amount: rewardAmount,
         currency: 'NGN',

@@ -1,7 +1,5 @@
 const { supabaseAdmin } = require('../services/supabase.service');
 const { validationResult } = require('express-validator');
-const { formatResponse } = require('../utils/helpers');
-const paystack = require('paystack')(process.env.PAYSTACK_SECRET_KEY);
 
 // Get available investment plans
 const getPlans = async (req, res) => {
@@ -134,289 +132,6 @@ const getPlans = async (req, res) => {
   }
 };
 
-// Initialize investment payment
-const initializePayment = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Validation error',
-        data: { errors: errors.array() }
-      });
-    }
-
-    const { plan_name } = req.body;
-    const userId = req.user.id;
-
-    // Get user details
-    const { data: user, error: userError } = await supabaseAdmin
-      .from('users')
-      .select('email, user_tier, full_name')
-      .eq('id', userId)
-      .single();
-
-    if (userError) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'User not found'
-      });
-    }
-
-    // Check if investments are enabled
-    const { data: investmentsSetting } = await supabaseAdmin
-      .from('platform_settings')
-      .select('setting_value')
-      .eq('setting_key', 'investments_enabled')
-      .single();
-
-    if (investmentsSetting?.setting_value !== 'true') {
-      return res.status(403).json({
-        status: 'error',
-        message: 'Investments are currently disabled'
-      });
-    }
-
-    // Get plan settings
-    const { data: planSettings } = await supabaseAdmin
-      .from('platform_settings')
-      .select('setting_key, setting_value')
-      .like('setting_key', `investment_plan_${plan_name}_%`);
-
-    const planConfig = {};
-    planSettings?.forEach(s => {
-      const key = s.setting_key.replace(`investment_plan_${plan_name}_`, '');
-      planConfig[key] = s.setting_value;
-    });
-
-    // Validate plan
-    if (!planConfig.amount || !planConfig.roi_percent) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Invalid investment plan'
-      });
-    }
-
-    if (planConfig.enabled !== 'true') {
-      return res.status(403).json({
-        status: 'error',
-        message: 'This investment plan is currently disabled'
-      });
-    }
-
-    // Check user tier restrictions
-    const proOnlyPlans = ['pro', 'master'];
-    if (proOnlyPlans.includes(plan_name) && user.user_tier !== 'Pro') {
-      return res.status(403).json({
-        status: 'error',
-        message: 'This plan is only available for Pro users'
-      });
-    }
-
-    const capitalAmount = parseFloat(planConfig.amount);
-    const roiPercent = parseFloat(planConfig.roi_percent);
-
-    // Generate reference
-    const reference = `INV_${plan_name.toUpperCase()}_${userId.slice(-8)}_${Date.now()}`;
-
-    // Initialize Paystack payment
-    const paymentData = {
-      email: user.email,
-      amount: capitalAmount * 100, // Convert to kobo
-      reference: reference,
-      callback_url: `${process.env.FRONTEND_URL}/investments/success?reference=${reference}`,
-      metadata: {
-        user_id: userId,
-        full_name: user.full_name,
-        purpose: 'investment',
-        plan_name: plan_name,
-        capital_amount: capitalAmount,
-        roi_percent: roiPercent
-      }
-    };
-
-    const initialization = await paystack.transaction.initialize(paymentData);
-
-    if (!initialization.status) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Payment initialization failed'
-      });
-    }
-
-    res.json({
-      status: 'success',
-      message: 'Payment initialized successfully',
-      data: {
-        authorization_url: initialization.data.authorization_url,
-        access_code: initialization.data.access_code,
-        reference: reference,
-        amount: capitalAmount,
-        plan_name: plan_name
-      }
-    });
-
-  } catch (error) {
-    console.error('Initialize investment payment error:', error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Internal server error'
-    });
-  }
-};
-
-// Verify payment and create investment
-const verifyPayment = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Validation error',
-        data: { errors: errors.array() }
-      });
-    }
-
-    const { reference } = req.body;
-    const userId = req.user.id;
-
-    // Check if investment already exists
-    const { data: existingInvestment } = await supabaseAdmin
-      .from('investments')
-      .select('id')
-      .eq('reference', reference)
-      .single();
-
-    if (existingInvestment) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Investment already created for this payment'
-      });
-    }
-
-    // Verify payment with Paystack
-    const verification = await paystack.transaction.verify(reference);
-    if (!verification.status ) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Payment verification failed'
-      });
-    }
-
-    const metadata = verification.data.metadata;
-    const planName = metadata.plan_name;
-    const capitalAmount = parseFloat(metadata.capital_amount);
-    const roiPercent = parseFloat(metadata.roi_percent);
-
-    // Calculate investment details
-    const weeklyPayoutAmount = capitalAmount * (roiPercent / 100);
-    const totalRoiAmount = weeklyPayoutAmount * 6;
-
-    const startDate = new Date();
-    const nextPayoutDate = new Date(startDate);
-    nextPayoutDate.setDate(nextPayoutDate.getDate() + 7);
-    
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + (7 * 6));
-
-    // Create investment
-    const { data: investment, error: investmentError } = await supabaseAdmin
-      .from('investments')
-      .insert({
-        user_id: userId,
-        plan_name: planName,
-        capital_amount: capitalAmount,
-        roi_percent: roiPercent,
-        weekly_payout_amount: weeklyPayoutAmount,
-        total_roi_amount: totalRoiAmount,
-        duration_weeks: 6,
-        current_week: 0,
-        start_date: startDate.toISOString(),
-        next_payout_date: nextPayoutDate.toISOString(),
-        end_date: endDate.toISOString(),
-        status: 'active',
-        reference: reference,
-        payment_reference: verification.data.reference
-      })
-      .select()
-      .single();
-
-    if (investmentError) {
-      console.error('Investment creation error:', investmentError);
-      return res.status(500).json({
-        status: 'error',
-        message: 'Failed to create investment'
-      });
-    }
-
-    // Create payout schedule (6 weeks)
-    const payoutRecords = [];
-    for (let week = 1; week <= 6; week++) {
-      const scheduledDate = new Date(startDate);
-      scheduledDate.setDate(scheduledDate.getDate() + (7 * week));
-      
-      payoutRecords.push({
-        investment_id: investment.id,
-        user_id: userId,
-        week_number: week,
-        amount: weeklyPayoutAmount,
-        status: 'pending',
-        scheduled_date: scheduledDate.toISOString()
-      });
-    }
-
-    const { error: payoutsError } = await supabaseAdmin
-      .from('investment_payouts')
-      .insert(payoutRecords);
-
-    if (payoutsError) {
-      console.error('Payouts creation error:', payoutsError);
-    }
-
-    // Create deposit transaction
-    await supabaseAdmin
-      .from('transactions')
-      .insert({
-        user_id: userId,
-        transaction_type: 'deposit',
-        balance_type: 'investment_balance',
-        amount: capitalAmount,
-        currency: 'NGN',
-        status: 'completed',
-        reference: reference,
-        description: `Investment deposit - ${planName.replace('_', '-')} plan (₦${capitalAmount.toLocaleString()})`,
-        metadata: verification.data
-      });
-
-    res.json({
-      status: 'success',
-      message: 'Investment created successfully',
-      data: {
-        investment: {
-          id: investment.id,
-          plan_name: planName,
-          capital_amount: capitalAmount,
-          roi_percent: roiPercent,
-          weekly_payout_amount: weeklyPayoutAmount,
-          total_return: totalRoiAmount,
-          duration_weeks: 6,
-          start_date: investment.start_date,
-          next_payout_date: investment.next_payout_date,
-          end_date: investment.end_date,
-          status: investment.status
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('Verify investment payment error:', error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Internal server error'
-    });
-  }
-};
-
 // Get user's investments
 const getMyInvestments = async (req, res) => {
   try {
@@ -470,7 +185,6 @@ const getInvestmentDetails = async (req, res) => {
     const { investmentId } = req.params;
     const userId = req.user.id;
 
-    // Get investment
     const { data: investment, error: investmentError } = await supabaseAdmin
       .from('investments')
       .select('*')
@@ -485,7 +199,6 @@ const getInvestmentDetails = async (req, res) => {
       });
     }
 
-    // Get payouts
     const { data: payouts } = await supabaseAdmin
       .from('investment_payouts')
       .select('*')
@@ -515,21 +228,18 @@ const getDashboard = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Get active investments
     const { data: activeInvestments } = await supabaseAdmin
       .from('investments')
       .select('*')
       .eq('user_id', userId)
       .eq('status', 'active');
 
-    // Get completed investments
     const { data: completedInvestments } = await supabaseAdmin
       .from('investments')
       .select('*')
       .eq('user_id', userId)
       .eq('status', 'completed');
 
-    // Calculate totals
     const totalInvested = [...(activeInvestments || []), ...(completedInvestments || [])]
       .reduce((sum, inv) => sum + parseFloat(inv.capital_amount), 0);
 
@@ -538,14 +248,12 @@ const getDashboard = async (req, res) => {
       (activeInvestments || [])
       .reduce((sum, inv) => sum + parseFloat(inv.total_paid_out), 0);
 
-    // Get wallet balance
     const { data: wallet } = await supabaseAdmin
       .from('wallets')
       .select('investment_balance')
       .eq('user_id', userId)
       .single();
 
-    // Get next payout info
     const nextPayout = activeInvestments && activeInvestments.length > 0
       ? activeInvestments.reduce((earliest, inv) => {
           const invDate = new Date(inv.next_payout_date);
@@ -601,7 +309,6 @@ const requestWithdrawal = async (req, res) => {
     const { amount } = req.body;
     const userId = req.user.id;
 
-    // Check if withdrawals are enabled
     const { data: withdrawalSetting } = await supabaseAdmin
       .from('platform_settings')
       .select('setting_value')
@@ -615,7 +322,6 @@ const requestWithdrawal = async (req, res) => {
       });
     }
 
-    // Get minimum withdrawal amount
     const { data: minSetting } = await supabaseAdmin
       .from('platform_settings')
       .select('setting_value')
@@ -631,7 +337,6 @@ const requestWithdrawal = async (req, res) => {
       });
     }
 
-    // Get user wallet
     const { data: wallet, error: walletError } = await supabaseAdmin
       .from('wallets')
       .select('investment_balance, account_name, bank_name, account_number')
@@ -645,7 +350,6 @@ const requestWithdrawal = async (req, res) => {
       });
     }
 
-    // Check bank details
     if (!wallet.account_name || !wallet.bank_name || !wallet.account_number) {
       return res.status(400).json({
         status: 'error',
@@ -653,7 +357,6 @@ const requestWithdrawal = async (req, res) => {
       });
     }
 
-    // Check balance
     if (parseFloat(wallet.investment_balance) < amount) {
       return res.status(400).json({
         status: 'error',
@@ -661,7 +364,6 @@ const requestWithdrawal = async (req, res) => {
       });
     }
 
-    // Deduct from balance immediately
     const newBalance = parseFloat(wallet.investment_balance) - amount;
 
     const { error: updateError } = await supabaseAdmin
@@ -673,7 +375,6 @@ const requestWithdrawal = async (req, res) => {
       throw updateError;
     }
 
-    // Create pending withdrawal transaction
     const reference = `WD_INVESTMENT_${Date.now()}_${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
 
     const { data: transaction, error: transactionError } = await supabaseAdmin
@@ -700,7 +401,6 @@ const requestWithdrawal = async (req, res) => {
       .single();
 
     if (transactionError) {
-      // Rollback balance if transaction creation fails
       await supabaseAdmin
         .from('wallets')
         .update({ investment_balance: wallet.investment_balance })
@@ -748,7 +448,6 @@ const transferToGames = async (req, res) => {
     const { amount } = req.body;
     const userId = req.user.id;
 
-    // Get minimum transfer amount
     const { data: minSetting } = await supabaseAdmin
       .from('platform_settings')
       .select('setting_value')
@@ -764,7 +463,6 @@ const transferToGames = async (req, res) => {
       });
     }
 
-    // Get wallet
     const { data: wallet, error: walletError } = await supabaseAdmin
       .from('wallets')
       .select('investment_balance, games_balance')
@@ -778,7 +476,6 @@ const transferToGames = async (req, res) => {
       });
     }
 
-    // Check balance
     if (parseFloat(wallet.investment_balance) < amount) {
       return res.status(400).json({
         status: 'error',
@@ -786,11 +483,9 @@ const transferToGames = async (req, res) => {
       });
     }
 
-    // Calculate new balances
     const newInvestmentBalance = parseFloat(wallet.investment_balance) - amount;
     const newGamesBalance = parseFloat(wallet.games_balance) + amount;
 
-    // Update wallet
     const { error: updateError } = await supabaseAdmin
       .from('wallets')
       .update({
@@ -803,7 +498,6 @@ const transferToGames = async (req, res) => {
       throw updateError;
     }
 
-    // Create transaction record
     const reference = `TRF_INV_GAMES_${Date.now()}_${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
 
     await supabaseAdmin
@@ -845,7 +539,6 @@ const transferToGames = async (req, res) => {
     });
   }
 };
-
 
 // Admin: Get all investments
 const adminGetAllInvestments = async (req, res) => {
@@ -904,12 +597,10 @@ const adminGetAllInvestments = async (req, res) => {
 // Admin: Get investment statistics
 const adminGetInvestmentStats = async (req, res) => {
   try {
-    // Get all investments
     const { data: allInvestments } = await supabaseAdmin
       .from('investments')
       .select('*');
 
-    // Calculate statistics
     const activeInvestments = allInvestments?.filter(inv => inv.status === 'active') || [];
     const completedInvestments = allInvestments?.filter(inv => inv.status === 'completed') || [];
 
@@ -917,12 +608,11 @@ const adminGetInvestmentStats = async (req, res) => {
       sum + parseFloat(inv.capital_amount), 0) || 0;
 
     const totalRoiPaid = allInvestments?.reduce((sum, inv) => 
-      sum + parseFloat(inv.total_paid_out), 0) || 0;
+      sum + parseFloat(inv.total_paid_out || 0), 0) || 0;
 
     const activeCapital = activeInvestments.reduce((sum, inv) => 
       sum + parseFloat(inv.capital_amount), 0);
 
-    // Get plan breakdown
     const planBreakdown = {};
     allInvestments?.forEach(inv => {
       if (!planBreakdown[inv.plan_name]) {
@@ -934,10 +624,9 @@ const adminGetInvestmentStats = async (req, res) => {
       }
       planBreakdown[inv.plan_name].count += 1;
       planBreakdown[inv.plan_name].total_capital += parseFloat(inv.capital_amount);
-      planBreakdown[inv.plan_name].total_roi_paid += parseFloat(inv.total_paid_out);
+      planBreakdown[inv.plan_name].total_roi_paid += parseFloat(inv.total_paid_out || 0);
     });
 
-    // Get pending payouts
     const { data: pendingPayouts } = await supabaseAdmin
       .from('investment_payouts')
       .select('amount')
@@ -972,12 +661,11 @@ const adminGetInvestmentStats = async (req, res) => {
   }
 };
 
-// Admin: Process weekly payouts (manually trigger)
+// Admin: Process weekly payouts
 const adminProcessWeeklyPayouts = async (req, res) => {
   try {
     const currentDate = new Date();
     
-    // Get all active investments where next payout is due
     const { data: dueInvestments, error: investmentError } = await supabaseAdmin
       .from('investments')
       .select('*')
@@ -992,10 +680,7 @@ const adminProcessWeeklyPayouts = async (req, res) => {
       return res.json({
         status: 'success',
         message: 'No payouts due at this time',
-        data: {
-          processed: 0,
-          total_amount: 0
-        }
+        data: { processed: 0, total_amount: 0 }
       });
     }
 
@@ -1003,13 +688,11 @@ const adminProcessWeeklyPayouts = async (req, res) => {
     let totalAmountPaid = 0;
     const errors = [];
 
-    // Process each investment
     for (const investment of dueInvestments) {
       try {
         const nextWeek = investment.current_week + 1;
         const payoutAmount = parseFloat(investment.weekly_payout_amount);
 
-        // Get user's current investment balance
         const { data: wallet } = await supabaseAdmin
           .from('wallets')
           .select('investment_balance')
@@ -1018,19 +701,18 @@ const adminProcessWeeklyPayouts = async (req, res) => {
 
         const newBalance = parseFloat(wallet?.investment_balance || 0) + payoutAmount;
 
-        // Update wallet
         await supabaseAdmin
           .from('wallets')
           .update({ investment_balance: newBalance })
           .eq('user_id', investment.user_id);
 
-        // Create transaction
         const { data: transaction } = await supabaseAdmin
           .from('transactions')
           .insert({
             user_id: investment.user_id,
             transaction_type: 'reward',
             balance_type: 'investment_balance',
+            earning_type: 'investment_return',
             amount: payoutAmount,
             currency: 'NGN',
             status: 'completed',
@@ -1045,7 +727,6 @@ const adminProcessWeeklyPayouts = async (req, res) => {
           .select()
           .single();
 
-        // Update payout record
         await supabaseAdmin
           .from('investment_payouts')
           .update({
@@ -1056,15 +737,12 @@ const adminProcessWeeklyPayouts = async (req, res) => {
           .eq('investment_id', investment.id)
           .eq('week_number', nextWeek);
 
-        // Calculate next payout date
         const nextPayoutDate = new Date(investment.next_payout_date);
         nextPayoutDate.setDate(nextPayoutDate.getDate() + 7);
 
-        const newTotalPaidOut = parseFloat(investment.total_paid_out) + payoutAmount;
+        const newTotalPaidOut = parseFloat(investment.total_paid_out || 0) + payoutAmount;
 
-        // Check if investment is complete
         if (nextWeek >= 6) {
-          // Investment completed
           await supabaseAdmin
             .from('investments')
             .update({
@@ -1075,7 +753,6 @@ const adminProcessWeeklyPayouts = async (req, res) => {
             })
             .eq('id', investment.id);
         } else {
-          // Update investment for next week
           await supabaseAdmin
             .from('investments')
             .update({
@@ -1092,26 +769,17 @@ const adminProcessWeeklyPayouts = async (req, res) => {
 
       } catch (error) {
         console.error(`Error processing investment ${investment.id}:`, error);
-        errors.push({
-          investment_id: investment.id,
-          error: error.message
-        });
+        errors.push({ investment_id: investment.id, error: error.message });
       }
     }
 
-    // Log admin activity
     await supabaseAdmin
       .from('admin_activities')
       .insert({
         admin_id: req.user.id,
         activity_type: 'investment_payouts_processed',
         description: `Processed ${processedCount} investment payouts totaling ₦${totalAmountPaid.toLocaleString()}`,
-        metadata: {
-          processed_count: processedCount,
-          total_amount: totalAmountPaid,
-          failed_count: errors.length,
-          errors: errors
-        }
+        metadata: { processed_count: processedCount, total_amount: totalAmountPaid, failed_count: errors.length, errors }
       });
 
     res.json({
@@ -1203,7 +871,6 @@ const adminProcessWithdrawal = async (req, res) => {
     const { action, decline_reason } = req.body;
     const adminId = req.user.id;
 
-    // Get transaction
     const { data: transaction, error: transactionError } = await supabaseAdmin
       .from('transactions')
       .select('*')
@@ -1221,7 +888,6 @@ const adminProcessWithdrawal = async (req, res) => {
     }
 
     if (action === 'approve') {
-      // Approve withdrawal
       const { error: updateError } = await supabaseAdmin
         .from('transactions')
         .update({
@@ -1231,11 +897,8 @@ const adminProcessWithdrawal = async (req, res) => {
         })
         .eq('id', transactionId);
 
-      if (updateError) {
-        throw updateError;
-      }
+      if (updateError) throw updateError;
 
-      // Update total withdrawn
       const { data: wallet } = await supabaseAdmin
         .from('wallets')
         .select('total_withdrawn_investment')
@@ -1249,32 +912,20 @@ const adminProcessWithdrawal = async (req, res) => {
         .update({ total_withdrawn_investment: newTotalWithdrawn })
         .eq('user_id', transaction.user_id);
 
-      // Log admin activity
-      await supabaseAdmin
-        .from('admin_activities')
-        .insert({
-          admin_id: adminId,
-          activity_type: 'investment_withdrawal_approved',
-          description: `Approved investment withdrawal of ₦${parseFloat(transaction.amount).toLocaleString()}`,
-          metadata: {
-            transaction_id: transactionId,
-            user_id: transaction.user_id,
-            amount: transaction.amount
-          }
-        });
+      await supabaseAdmin.from('admin_activities').insert({
+        admin_id: adminId,
+        activity_type: 'investment_withdrawal_approved',
+        description: `Approved investment withdrawal of ₦${parseFloat(transaction.amount).toLocaleString()}`,
+        metadata: { transaction_id: transactionId, user_id: transaction.user_id, amount: transaction.amount }
+      });
 
       res.json({
         status: 'success',
         message: 'Withdrawal approved successfully',
-        data: {
-          transactionId,
-          action: 'approve',
-          amount: transaction.amount
-        }
+        data: { transactionId, action: 'approve', amount: transaction.amount }
       });
 
     } else if (action === 'decline') {
-      // Decline withdrawal - return money to balance
       const { data: wallet } = await supabaseAdmin
         .from('wallets')
         .select('investment_balance')
@@ -1288,7 +939,6 @@ const adminProcessWithdrawal = async (req, res) => {
         .update({ investment_balance: restoredBalance })
         .eq('user_id', transaction.user_id);
 
-      // Update transaction
       const { error: updateError } = await supabaseAdmin
         .from('transactions')
         .update({
@@ -1299,34 +949,19 @@ const adminProcessWithdrawal = async (req, res) => {
         })
         .eq('id', transactionId);
 
-      if (updateError) {
-        throw updateError;
-      }
+      if (updateError) throw updateError;
 
-      // Log admin activity
-      await supabaseAdmin
-        .from('admin_activities')
-        .insert({
-          admin_id: adminId,
-          activity_type: 'investment_withdrawal_declined',
-          description: `Declined investment withdrawal of ₦${parseFloat(transaction.amount).toLocaleString()}`,
-          metadata: {
-            transaction_id: transactionId,
-            user_id: transaction.user_id,
-            amount: transaction.amount,
-            reason: decline_reason
-          }
-        });
+      await supabaseAdmin.from('admin_activities').insert({
+        admin_id: adminId,
+        activity_type: 'investment_withdrawal_declined',
+        description: `Declined investment withdrawal of ₦${parseFloat(transaction.amount).toLocaleString()}`,
+        metadata: { transaction_id: transactionId, user_id: transaction.user_id, amount: transaction.amount, reason: decline_reason }
+      });
 
       res.json({
         status: 'success',
         message: 'Withdrawal declined successfully',
-        data: {
-          transactionId,
-          action: 'decline',
-          amount: transaction.amount,
-          restored_balance: restoredBalance
-        }
+        data: { transactionId, action: 'decline', amount: transaction.amount, restored_balance: restoredBalance }
       });
 
     } else {
@@ -1381,7 +1016,6 @@ const adminBulkProcessWithdrawals = async (req, res) => {
 
     for (const transactionId of transaction_ids) {
       try {
-        // Get transaction
         const { data: transaction } = await supabaseAdmin
           .from('transactions')
           .select('*')
@@ -1397,17 +1031,11 @@ const adminBulkProcessWithdrawals = async (req, res) => {
         }
 
         if (action === 'approve') {
-          // Approve withdrawal
           await supabaseAdmin
             .from('transactions')
-            .update({
-              status: 'completed',
-              processed_by: adminId,
-              processed_at: new Date().toISOString()
-            })
+            .update({ status: 'completed', processed_by: adminId, processed_at: new Date().toISOString() })
             .eq('id', transactionId);
 
-          // Update total withdrawn
           const { data: wallet } = await supabaseAdmin
             .from('wallets')
             .select('total_withdrawn_investment')
@@ -1422,7 +1050,6 @@ const adminBulkProcessWithdrawals = async (req, res) => {
             .eq('user_id', transaction.user_id);
 
         } else if (action === 'decline') {
-          // Return money to balance
           const { data: wallet } = await supabaseAdmin
             .from('wallets')
             .select('investment_balance')
@@ -1436,15 +1063,9 @@ const adminBulkProcessWithdrawals = async (req, res) => {
             .update({ investment_balance: restoredBalance })
             .eq('user_id', transaction.user_id);
 
-          // Update transaction
           await supabaseAdmin
             .from('transactions')
-            .update({
-              status: 'cancelled',
-              processed_by: adminId,
-              processed_at: new Date().toISOString(),
-              decline_reason: decline_reason || 'Declined by admin'
-            })
+            .update({ status: 'cancelled', processed_by: adminId, processed_at: new Date().toISOString(), decline_reason: decline_reason || 'Declined by admin' })
             .eq('id', transactionId);
         }
 
@@ -1458,22 +1079,12 @@ const adminBulkProcessWithdrawals = async (req, res) => {
       }
     }
 
-    // Log admin activity
-    await supabaseAdmin
-      .from('admin_activities')
-      .insert({
-        admin_id: adminId,
-        activity_type: `investment_withdrawals_bulk_${action}`,
-        description: `Bulk ${action} ${processedCount} investment withdrawals totaling ₦${totalAmount.toLocaleString()}`,
-        metadata: {
-          action,
-          processed_count: processedCount,
-          failed_count: failedIds.length,
-          total_amount: totalAmount,
-          processed_ids: processedIds,
-          failed_ids: failedIds
-        }
-      });
+    await supabaseAdmin.from('admin_activities').insert({
+      admin_id: adminId,
+      activity_type: `investment_withdrawals_bulk_${action}`,
+      description: `Bulk ${action} ${processedCount} investment withdrawals totaling ₦${totalAmount.toLocaleString()}`,
+      metadata: { action, processed_count: processedCount, failed_count: failedIds.length, total_amount: totalAmount, processed_ids: processedIds, failed_ids: failedIds }
+    });
 
     res.json({
       status: 'success',
@@ -1499,8 +1110,6 @@ const adminBulkProcessWithdrawals = async (req, res) => {
 module.exports = {
   // User endpoints
   getPlans,
-  initializePayment,
-  verifyPayment,
   getMyInvestments,
   getInvestmentDetails,
   getDashboard,
@@ -1515,5 +1124,3 @@ module.exports = {
   adminProcessWithdrawal,
   adminBulkProcessWithdrawals
 };
-
- 
