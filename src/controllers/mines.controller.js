@@ -37,7 +37,7 @@ const getGameSettings = async (req, res) => {
     });
 
     const gameSettings = {
-      enabled: settingsMap.mines_enabled === true,
+      enabled: settingsMap.mines_enabled === true || settingsMap.mines_enabled === 'true',
       minStake: parseFloat(settingsMap.mines_min_stake || 50),
       bombOptions: settingsMap.mines_bomb_options || [4, 6, 8, 10],
       multipliers: settingsMap.mines_multipliers || {}
@@ -88,7 +88,7 @@ const startGame = async (req, res) => {
     });
 
     // Check if game is enabled
-    if (settingsMap.mines_enabled !== true) {
+    if (settingsMap.mines_enabled === false || settingsMap.mines_enabled === 'false') {
       return res.status(403).json({
         status: 'error',
         message: 'Mines game is currently disabled'
@@ -118,7 +118,7 @@ const startGame = async (req, res) => {
     // Get user's gaming wallet balance
     const { data: wallet } = await supabaseAdmin
       .from('wallets')
-      .select('gaming_wallet')
+      .select('games_balance')
       .eq('user_id', userId)
       .single();
 
@@ -131,7 +131,7 @@ const startGame = async (req, res) => {
 
     // Validate stake amount
     const minStake = parseFloat(settingsMap.mines_min_stake || 50);
-    const validation = validateStakeAmount(stake_amount, minStake, wallet.gaming_wallet);
+    const validation = validateStakeAmount(stake_amount, minStake, wallet.games_balance);
     
     if (!validation.valid) {
       return res.status(400).json({
@@ -144,11 +144,11 @@ const startGame = async (req, res) => {
     const bombPositions = generateBombPositions(bomb_count);
 
     // Deduct stake from gaming wallet
-    const newBalance = parseFloat(wallet.gaming_wallet) - parseFloat(stake_amount);
+    const newBalance = parseFloat(wallet.games_balance) - parseFloat(stake_amount);
     
     const { error: walletError } = await supabaseAdmin
       .from('wallets')
-      .update({ gaming_wallet: newBalance })
+      .update({ games_balance: newBalance })
       .eq('user_id', userId);
 
     if (walletError) throw walletError;
@@ -170,7 +170,7 @@ const startGame = async (req, res) => {
       // Rollback: Add stake back to wallet
       await supabaseAdmin
         .from('wallets')
-        .update({ gaming_wallet: wallet.gaming_wallet })
+        .update({ games_balance: wallet.games_balance })
         .eq('user_id', userId);
       throw roundError;
     }
@@ -206,7 +206,7 @@ const startGame = async (req, res) => {
           started_at: round.started_at
           ,bombMultipliers
         },
-        new_gaming_wallet_balance: newBalance.toFixed(2)
+        new_games_balance_balance: newBalance.toFixed(2)
       }
     });
   } catch (error) {
@@ -285,7 +285,7 @@ const processGameResult = async (req, res) => {
     // Get user's current gaming wallet
     const { data: wallet } = await supabaseAdmin
       .from('wallets')
-      .select('gaming_wallet')
+      .select('games_balance')
       .eq('user_id', userId)
       .single();
 
@@ -301,7 +301,7 @@ const processGameResult = async (req, res) => {
       ended_at: new Date().toISOString()
     };
 
-    let newBalance = parseFloat(wallet.gaming_wallet);
+    let newBalance = parseFloat(wallet.games_balance);
     let transactionData = {
       user_id: userId,
       transaction_type: 'gaming',
@@ -352,7 +352,7 @@ const processGameResult = async (req, res) => {
             status: 'hit_bomb',
             ended_at: updateData.ended_at
           },
-          new_gaming_wallet_balance: newBalance.toFixed(2)
+          new_games_balance_balance: newBalance.toFixed(2)
         }
       });
     }
@@ -384,7 +384,7 @@ const processGameResult = async (req, res) => {
 
     const { error: walletUpdateError } = await supabaseAdmin
       .from('wallets')
-      .update({ gaming_wallet: newBalance })
+      .update({ games_balance: newBalance })
       .eq('user_id', userId);
 
     if (walletUpdateError) throw walletUpdateError;
@@ -422,7 +422,7 @@ const processGameResult = async (req, res) => {
           status: 'cashed_out',
           ended_at: updateData.ended_at
         },
-        new_gaming_wallet_balance: newBalance.toFixed(2)
+        new_games_balance_balance: newBalance.toFixed(2)
       }
     });
   } catch (error) {

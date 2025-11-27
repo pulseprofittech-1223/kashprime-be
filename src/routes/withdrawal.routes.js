@@ -6,14 +6,7 @@ const router = express.Router();
 const withdrawalController = require('../controllers/withdrawal.controller');
 const { authMiddleware } = require('../middleware/auth.middleware');
 
-// const withdrawalLimiter = rateLimit({
-//   windowMs: 60 * 60 * 1000,  
-//   max: 5,  
-//   message: {
-//     status: 'error',
-//     message: 'Too many withdrawal requests, please try again later.'
-//   }
-// });
+ 
 
 // Apply auth middleware to all routes
 router.use(authMiddleware);
@@ -31,21 +24,12 @@ router.post('/request',   [
     .matches(/^\d+$/)
     .withMessage('Transaction PIN must be 4-6 digits'),
  
+  body('balance_type')
+    .isIn(['coins_balance', 'games_balance', 'referral_balance', 'investment_balance'])
+    .withMessage('Invalid balance type'),
 ], withdrawalController.createWithdrawalRequest);
 
-/**
- * POST /api/withdrawal/set-pin
- * Set transaction PIN
- */
-router.post('/set-pin', [
-  body('pin')
-    .isLength({ min: 4, max: 6 })
-    .matches(/^\d+$/)
-    .withMessage('PIN must be 4-6 digits'),
-  body('current_password')
-    .isLength({ min: 8 })
-    .withMessage('Current password is required')
-], withdrawalController.setTransactionPin);
+ 
 
 /**
  * GET /api/withdrawal/history

@@ -33,7 +33,7 @@ const getAllUsers = async (req, res) => {
         wallets (
           voxcoin_balance, growth_bonus, tier1_earnings,
           tier2_earnings, manager_earnings, withdrawable_balance,
-          gaming_wallet, investment_balance, total_withdrawn
+          games_balance, investment_balance, total_withdrawn
         )
       `)
       .range(offset, offset + parseInt(limit) - 1)
@@ -614,7 +614,7 @@ const getUserEarningsAdmin = async (req, res) => {
         tier2_earnings: parseFloat(wallet.tier2_earnings || 0),
         manager_earnings: parseFloat(wallet.manager_earnings || 0),
         withdrawable_balance: parseFloat(wallet.withdrawable_balance || 0),
-        gaming_wallet: parseFloat(wallet.gaming_wallet || 0),
+        games_balance: parseFloat(wallet.games_balance || 0),
         investment_balance: parseFloat(wallet.investment_balance || 0),
         total_withdrawn: parseFloat(wallet.total_withdrawn || 0),
         total_accumulated_earnings: parseFloat(wallet.total_accumulated_earnings || 0)

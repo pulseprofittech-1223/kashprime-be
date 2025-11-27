@@ -1,6 +1,141 @@
  
 
 const { supabaseAdmin } = require("../services/supabase.service");
+const { getTimeAgo,   } = require('../utils/helpers/gaming');
+
+ 
+/**
+ * Get top 5 recent winners across all games
+ * Returns winners from Coinflip, Lucky Jet, and Mines games
+ * 
+ * @route GET /api/games/top-winners
+ * @access Public (or Authenticated based on your needs)
+ */
+const getTopRecentWinners = async (req, res) => {
+  try {
+    // Fetch recent winners from Coinflip game
+    const { data: coinflipWinners, error: coinflipError } = await supabaseAdmin
+      .from('coinflip_rounds')
+      .select(`
+        id,
+        user_id,
+        stake_amount,
+        payout_amount,
+        profit_loss,
+        created_at,
+        users!inner(username, full_name, user_tier)
+      `)
+      .eq('status', 'won')
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (coinflipError) throw coinflipError;
+
+   
+
+    // Fetch recent winners from Mines game
+    const { data: minesWinners, error: minesError } = await supabaseAdmin
+      .from('mines_rounds')
+      .select(`
+        id,
+        user_id,
+        stake_amount,
+        bomb_count,
+        successful_clicks,
+        cashout_multiplier,
+        payout_amount,
+        profit_loss,
+        created_at,
+        users!inner(username, full_name, user_tier)
+      `)
+      .eq('status', 'cashed_out')
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (minesError) throw minesError;
+
+    // Transform and combine all winners with game info
+    const allWinners = [
+      ...(coinflipWinners || []).map(w => ({
+        id: w.id,
+        username: w.users?.username || 'Unknown',
+        full_name: w.users?.full_name || 'Unknown Player',
+        user_tier: w.users?.user_tier || 'Free',
+        game: 'Coinflip',
+        stake_amount: parseFloat(w.stake_amount),
+        payout_amount: parseFloat(w.payout_amount),
+        profit: parseFloat(w.profit_loss),
+        multiplier: w.payout_amount > 0 ? (parseFloat(w.payout_amount) / parseFloat(w.stake_amount)).toFixed(2) : '0.00',
+        created_at: w.created_at,
+        game_details: {
+          result: 'Won'
+        }
+      })),
+    
+      ...(minesWinners || []).map(w => ({
+        id: w.id,
+        username: w.users?.username || 'Unknown',
+        full_name: w.users?.full_name || 'Unknown Player',
+        user_tier: w.users?.user_tier || 'Free',
+        game: 'Mines',
+        stake_amount: parseFloat(w.stake_amount),
+        payout_amount: parseFloat(w.payout_amount),
+        profit: parseFloat(w.profit_loss),
+        multiplier: w.cashout_multiplier ? parseFloat(w.cashout_multiplier).toFixed(2) : '0.00',
+        created_at: w.created_at,
+        game_details: {
+          bombs: w.bomb_count,
+          safe_clicks: w.successful_clicks,
+          cashout_at: `${w.cashout_multiplier}x`
+        }
+      }))
+    ];
+
+    // Sort by created_at descending and get top 5
+    const topWinners = allWinners
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 5)
+      .map(winner => ({
+        ...winner,
+        stake_amount: winner.stake_amount.toLocaleString('en-NG', { 
+          style: 'currency', 
+          currency: 'NGN',
+          minimumFractionDigits: 2 
+        }),
+        payout_amount: winner.payout_amount.toLocaleString('en-NG', { 
+          style: 'currency', 
+          currency: 'NGN',
+          minimumFractionDigits: 2 
+        }),
+        profit: winner.profit.toLocaleString('en-NG', { 
+          style: 'currency', 
+          currency: 'NGN',
+          minimumFractionDigits: 2 
+        }),
+        time_ago: getTimeAgo(winner.created_at)
+      }));
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Top 5 recent winners retrieved successfully',
+      data: {
+        winners: topWinners,
+        total_found: allWinners.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching top winners:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Failed to retrieve top winners',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+
+
 
 // ============================================
 const updateGameBalance = async (req, res) => {
@@ -288,5 +423,5 @@ const getGamesBalance = async (req, res) => {
 module.exports = {
   updateGameBalance,
   getGameHistory,
-  getGamesBalance
+  getGamesBalance, getTopRecentWinners
 };

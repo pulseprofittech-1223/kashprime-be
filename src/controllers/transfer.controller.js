@@ -175,7 +175,7 @@ const transferToGamingWallet = async (req, res) => {
     const newTier1 = tier1Earnings - deductions.tier1_earnings;
     const newManager = managerEarnings - deductions.manager_earnings;
     const newGrowth = growthBonus - deductions.growth_bonus;
-    const newGamingWallet = parseFloat(wallet.gaming_wallet || 0) + amount;
+    const newGamingWallet = parseFloat(wallet.games_balance || 0) + amount;
 
     // Update wallet with new balances
     const { error: updateError } = await supabaseAdmin
@@ -185,7 +185,7 @@ const transferToGamingWallet = async (req, res) => {
         tier1_earnings: newTier1,
         manager_earnings: newManager,
         growth_bonus: newGrowth,
-        gaming_wallet: newGamingWallet
+        games_balance: newGamingWallet
       })
       .eq('user_id', userId);
 
@@ -236,7 +236,7 @@ const transferToGamingWallet = async (req, res) => {
           tier1_earnings: newTier1,
           manager_earnings: newManager,
           growth_bonus: newGrowth,
-          gaming_wallet: newGamingWallet,
+          games_balance: newGamingWallet,
           total_withdrawable: newTier2 + newTier1 + newManager + newGrowth
         }
       }
@@ -324,7 +324,7 @@ const getTransferInfo = async (req, res) => {
     // Get wallet details
     const { data: wallet, error: walletError } = await supabaseAdmin
       .from('wallets')
-      .select('tier2_earnings, tier1_earnings, manager_earnings, growth_bonus, gaming_wallet')
+      .select('tier2_earnings, tier1_earnings, manager_earnings, growth_bonus, games_balance')
       .eq('user_id', userId)
       .single();
 
@@ -384,7 +384,7 @@ const getTransferInfo = async (req, res) => {
           manager_earnings: parseFloat(wallet.manager_earnings || 0),
           growth_bonus: parseFloat(wallet.growth_bonus || 0)
         },
-        current_gaming_wallet: parseFloat(wallet.gaming_wallet || 0)
+        current_games_balance: parseFloat(wallet.games_balance || 0)
       }
     });
 

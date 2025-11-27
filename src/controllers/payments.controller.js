@@ -355,7 +355,6 @@ class PaymentController {
         user_id: userId,
         transaction_type: 'deposit',
         balance_type: 'games_balance',
-        earning_type: 'gaming_deposit',
         amount: paidAmount,
         currency: 'NGN',
         status: 'completed',
@@ -464,7 +463,6 @@ class PaymentController {
         user_id: userId,
         transaction_type: 'deposit',
         balance_type: 'investment_balance',
-        earning_type: 'investment_deposit',
         amount: capitalAmount,
         currency: 'NGN',
         status: 'completed',
@@ -573,7 +571,6 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
       user_id: userId,
       transaction_type: 'upgrade_payment',
       balance_type: 'coins_balance',
-      earning_type: 'tier_upgrade',
       amount: paidAmount,
       currency: 'NGN',
       status: 'completed',
@@ -590,7 +587,6 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
       user_id: userId,
       transaction_type: 'reward',
       balance_type: 'coins_balance',
-      earning_type: 'upgrade_bonus',
       amount: upgradeBonus,
       currency: 'NGN',
       status: 'completed',
@@ -755,7 +751,6 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
           id,
           transaction_type,
           balance_type,
-          earning_type,
           amount,
           currency,
           reference,
@@ -773,14 +768,15 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
         query = query.eq('transaction_type', type);
       }
 
-      // Filter by purpose (earning_type) if provided
+      // Filter by purpose (transaction_type + balance_type) if provided
       if (purpose) {
-        const purposeMap = {
-          gaming: 'gaming_deposit',
-          investment: 'investment_deposit',
-          upgrade: 'tier_upgrade'
-        };
-        query = query.eq('earning_type', purposeMap[purpose]);
+        if (purpose === 'gaming') {
+          query = query.eq('transaction_type', 'deposit').eq('balance_type', 'games_balance');
+        } else if (purpose === 'investment') {
+          query = query.eq('transaction_type', 'deposit').eq('balance_type', 'investment_balance');
+        } else if (purpose === 'upgrade') {
+          query = query.eq('transaction_type', 'upgrade_payment');
+        }
       }
 
       const { data: transactions, error } = await query;
@@ -800,12 +796,13 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
       }
 
       if (purpose) {
-        const purposeMap = {
-          gaming: 'gaming_deposit',
-          investment: 'investment_deposit',
-          upgrade: 'tier_upgrade'
-        };
-        countQuery = countQuery.eq('earning_type', purposeMap[purpose]);
+        if (purpose === 'gaming') {
+          countQuery = countQuery.eq('transaction_type', 'deposit').eq('balance_type', 'games_balance');
+        } else if (purpose === 'investment') {
+          countQuery = countQuery.eq('transaction_type', 'deposit').eq('balance_type', 'investment_balance');
+        } else if (purpose === 'upgrade') {
+          countQuery = countQuery.eq('transaction_type', 'upgrade_payment');
+        }
       }
 
       const { count } = await countQuery;
@@ -847,7 +844,6 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
           user_id,
           transaction_type,
           balance_type,
-          earning_type,
           amount,
           currency,
           reference,
@@ -863,18 +859,19 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
             user_tier
           )
         `, { count: 'exact' })
-        .in('earning_type', ['gaming_deposit', 'investment_deposit', 'tier_upgrade', 'upgrade_bonus', 'referral_reward'])
+        .in('transaction_type', ['deposit', 'upgrade_payment', 'reward'])
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
 
       // Filters
       if (purpose) {
-        const purposeMap = {
-          gaming: 'gaming_deposit',
-          investment: 'investment_deposit',
-          upgrade: 'tier_upgrade'
-        };
-        query = query.eq('earning_type', purposeMap[purpose]);
+        if (purpose === 'gaming') {
+          query = query.eq('transaction_type', 'deposit').eq('balance_type', 'games_balance');
+        } else if (purpose === 'investment') {
+          query = query.eq('transaction_type', 'deposit').eq('balance_type', 'investment_balance');
+        } else if (purpose === 'upgrade') {
+          query = query.eq('transaction_type', 'upgrade_payment');
+        }
       }
 
       if (status) {
@@ -901,11 +898,17 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
 
       // Calculate totals
       const totals = transactions.reduce((acc, t) => {
-        const purposeKey = t.earning_type === 'gaming_deposit' ? 'gaming'
-          : t.earning_type === 'investment_deposit' ? 'investment'
-          : t.earning_type === 'tier_upgrade' ? 'upgrade'
-          : t.earning_type === 'upgrade_bonus' ? 'upgrade_bonus'
-          : 'referral_reward';
+        let purposeKey = 'other';
+        
+        if (t.transaction_type === 'deposit' && t.balance_type === 'games_balance') {
+          purposeKey = 'gaming';
+        } else if (t.transaction_type === 'deposit' && t.balance_type === 'investment_balance') {
+          purposeKey = 'investment';
+        } else if (t.transaction_type === 'upgrade_payment') {
+          purposeKey = 'upgrade';
+        } else if (t.transaction_type === 'reward') {
+          purposeKey = 'reward';
+        }
         
         if (!acc[purposeKey]) {
           acc[purposeKey] = { count: 0, total_amount: 0 };

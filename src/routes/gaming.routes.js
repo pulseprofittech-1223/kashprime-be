@@ -4,9 +4,12 @@ const router = express.Router();
 const { 
   updateGameBalance,
   getGameHistory,
-  getGamesBalance
+  getGamesBalance, getTopRecentWinners
 } = require('../controllers/gaming.controller');
 const { authMiddleware,  } = require('../middleware/auth.middleware');
+
+router.get('/top-winners', getTopRecentWinners);
+
 
 // All routes require user authentication
 router.use(authMiddleware);

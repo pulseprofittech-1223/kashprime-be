@@ -34,8 +34,13 @@ const generateBombPositions = (bombCount) => {
  */
 const calculatePayout = (stakeAmount, successfulClicks, bombCount, multiplierConfig) => {
   try {
+ 
+
+
     // Get multipliers for selected bomb count
-    const bombConfig = multiplierConfig[bombCount.toString()];
+    const bombConfig = JSON.parse(multiplierConfig)[bombCount.toString()];
+
+    console.log(bombConfig, 'bombConfig') 
     
     if (!bombConfig || !bombConfig.multipliers) {
       throw new Error(`Invalid bomb configuration for ${bombCount} bombs`);
@@ -45,7 +50,7 @@ const calculatePayout = (stakeAmount, successfulClicks, bombCount, multiplierCon
     if (successfulClicks < 1 || successfulClicks > bombConfig.levels) {
       throw new Error(`Invalid successful clicks: ${successfulClicks}. Must be between 1 and ${bombConfig.levels}`);
     }
-    
+       
     // Get multiplier (0-indexed array)
     const cashoutMultiplier = bombConfig.multipliers[successfulClicks - 1];
     

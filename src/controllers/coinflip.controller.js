@@ -131,7 +131,7 @@ const playGame = async (req, res) => {
     // Get user's gaming wallet balance
     const { data: wallet, error: walletError } = await supabaseAdmin
       .from('wallets')
-      .select('gaming_wallet')
+      .select('games_balance')
       .eq('user_id', userId)
       .single();
 
@@ -142,7 +142,7 @@ const playGame = async (req, res) => {
       });
     }
 
-    const currentBalance = parseFloat(wallet.gaming_wallet);
+    const currentBalance = parseFloat(wallet.games_balance);
 
     // Validate stake amount
     const validation = validateStakeAmount(stake_amount, minStake, currentBalance);
@@ -198,7 +198,7 @@ const playGame = async (req, res) => {
     // Update user's gaming wallet
     const { error: updateError } = await supabaseAdmin
       .from('wallets')
-      .update({ gaming_wallet: newBalance })
+      .update({ games_balance: newBalance })
       .eq('user_id', userId);
 
     if (updateError) {
@@ -300,7 +300,7 @@ const playGame = async (req, res) => {
             status: round.status,
             created_at: round.created_at
           },
-          new_gaming_wallet_balance: formatCurrency(newBalance)
+          new_games_balance_balance: formatCurrency(newBalance)
         }
       });
     } else {
@@ -320,7 +320,7 @@ const playGame = async (req, res) => {
             status: round.status,
             created_at: round.created_at
           },
-          new_gaming_wallet_balance: formatCurrency(newBalance)
+          new_games_balance_balance: formatCurrency(newBalance)
         }
       });
     }
