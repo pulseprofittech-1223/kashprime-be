@@ -43,14 +43,29 @@ const getPlans = async (req, res) => {
     // Build plans array
     const plans = [
       {
+        name: 'beginner',
+        display_name: 'Beginner',
+        capital: parseFloat(settingsMap['investment_plan_beginner_amount'] || 10000),
+        roi_percent: parseFloat(settingsMap['investment_plan_beginner_roi_percent'] || 20),
+        weekly_payout: parseFloat(settingsMap['investment_plan_beginner_amount'] || 10000) * 
+                      (parseFloat(settingsMap['investment_plan_beginner_roi_percent'] || 20) / 100),
+        total_return: (parseFloat(settingsMap['investment_plan_beginner_amount'] || 10000) * 
+                     (parseFloat(settingsMap['investment_plan_beginner_roi_percent'] || 20) / 100) * 6) + 
+                     parseFloat(settingsMap['investment_plan_beginner_amount'] || 10000),
+        duration_weeks: 6,
+        enabled: settingsMap['investment_plan_beginner_enabled'] !== 'false',
+        available_for: ['Free', 'Pro']
+      },
+      {
         name: 'starter',
         display_name: 'Starter',
         capital: parseFloat(settingsMap['investment_plan_starter_amount'] || 20000),
         roi_percent: parseFloat(settingsMap['investment_plan_starter_roi_percent'] || 20),
         weekly_payout: parseFloat(settingsMap['investment_plan_starter_amount'] || 20000) * 
                       (parseFloat(settingsMap['investment_plan_starter_roi_percent'] || 20) / 100),
-        total_return: parseFloat(settingsMap['investment_plan_starter_amount'] || 20000) * 
-                     (parseFloat(settingsMap['investment_plan_starter_roi_percent'] || 20) / 100) * 6,
+        total_return: (parseFloat(settingsMap['investment_plan_starter_amount'] || 20000) * 
+                     (parseFloat(settingsMap['investment_plan_starter_roi_percent'] || 20) / 100) * 6) +
+                     parseFloat(settingsMap['investment_plan_starter_amount'] || 20000),
         duration_weeks: 6,
         enabled: settingsMap['investment_plan_starter_enabled'] === 'true',
         available_for: ['Free', 'Pro']
@@ -62,8 +77,9 @@ const getPlans = async (req, res) => {
         roi_percent: parseFloat(settingsMap['investment_plan_amateur_roi_percent'] || 20),
         weekly_payout: parseFloat(settingsMap['investment_plan_amateur_amount'] || 50000) * 
                       (parseFloat(settingsMap['investment_plan_amateur_roi_percent'] || 20) / 100),
-        total_return: parseFloat(settingsMap['investment_plan_amateur_amount'] || 50000) * 
-                     (parseFloat(settingsMap['investment_plan_amateur_roi_percent'] || 20) / 100) * 6,
+        total_return: (parseFloat(settingsMap['investment_plan_amateur_amount'] || 50000) * 
+                     (parseFloat(settingsMap['investment_plan_amateur_roi_percent'] || 20) / 100) * 6) +
+                     parseFloat(settingsMap['investment_plan_amateur_amount'] || 50000),
         duration_weeks: 6,
         enabled: settingsMap['investment_plan_amateur_enabled'] === 'true',
         available_for: ['Free', 'Pro']
@@ -75,8 +91,9 @@ const getPlans = async (req, res) => {
         roi_percent: parseFloat(settingsMap['investment_plan_semi_amateur_roi_percent'] || 20),
         weekly_payout: parseFloat(settingsMap['investment_plan_semi_amateur_amount'] || 100000) * 
                       (parseFloat(settingsMap['investment_plan_semi_amateur_roi_percent'] || 20) / 100),
-        total_return: parseFloat(settingsMap['investment_plan_semi_amateur_amount'] || 100000) * 
-                     (parseFloat(settingsMap['investment_plan_semi_amateur_roi_percent'] || 20) / 100) * 6,
+        total_return: (parseFloat(settingsMap['investment_plan_semi_amateur_amount'] || 100000) * 
+                     (parseFloat(settingsMap['investment_plan_semi_amateur_roi_percent'] || 20) / 100) * 6) +
+                     parseFloat(settingsMap['investment_plan_semi_amateur_amount'] || 100000),
         duration_weeks: 6,
         enabled: settingsMap['investment_plan_semi_amateur_enabled'] === 'true',
         available_for: ['Free', 'Pro']
@@ -88,8 +105,9 @@ const getPlans = async (req, res) => {
         roi_percent: parseFloat(settingsMap['investment_plan_pro_roi_percent'] || 25),
         weekly_payout: parseFloat(settingsMap['investment_plan_pro_amount'] || 160000) * 
                       (parseFloat(settingsMap['investment_plan_pro_roi_percent'] || 25) / 100),
-        total_return: parseFloat(settingsMap['investment_plan_pro_amount'] || 160000) * 
-                     (parseFloat(settingsMap['investment_plan_pro_roi_percent'] || 25) / 100) * 6,
+        total_return: (parseFloat(settingsMap['investment_plan_pro_amount'] || 160000) * 
+                     (parseFloat(settingsMap['investment_plan_pro_roi_percent'] || 25) / 100) * 6) +
+                     parseFloat(settingsMap['investment_plan_pro_amount'] || 160000),
         duration_weeks: 6,
         enabled: settingsMap['investment_plan_pro_enabled'] === 'true',
         available_for: ['Pro']
@@ -101,8 +119,9 @@ const getPlans = async (req, res) => {
         roi_percent: parseFloat(settingsMap['investment_plan_master_roi_percent'] || 25),
         weekly_payout: parseFloat(settingsMap['investment_plan_master_amount'] || 250000) * 
                       (parseFloat(settingsMap['investment_plan_master_roi_percent'] || 25) / 100),
-        total_return: parseFloat(settingsMap['investment_plan_master_amount'] || 250000) * 
-                     (parseFloat(settingsMap['investment_plan_master_roi_percent'] || 25) / 100) * 6,
+        total_return: (parseFloat(settingsMap['investment_plan_master_amount'] || 250000) * 
+                     (parseFloat(settingsMap['investment_plan_master_roi_percent'] || 25) / 100) * 6) +
+                     parseFloat(settingsMap['investment_plan_master_amount'] || 250000),
         duration_weeks: 6,
         enabled: settingsMap['investment_plan_master_enabled'] === 'true',
         available_for: ['Pro']
@@ -691,7 +710,12 @@ const adminProcessWeeklyPayouts = async (req, res) => {
     for (const investment of dueInvestments) {
       try {
         const nextWeek = investment.current_week + 1;
-        const payoutAmount = parseFloat(investment.weekly_payout_amount);
+        let payoutAmount = parseFloat(investment.weekly_payout_amount);
+
+        // If this is the final week, add the capital back
+        if (nextWeek >= (investment.duration_weeks || 6)) {
+          payoutAmount += parseFloat(investment.capital_amount);
+        }
 
         const { data: wallet } = await supabaseAdmin
           .from('wallets')

@@ -1,45 +1,41 @@
 const { supabaseAdmin } = require('../services/supabase.service');
-const { decryptPassword } = require('../utils/helpers');  
-
+const { decryptPassword } = require('../utils/helpers');
 
 // ==================== USER MANAGEMENT ====================
- 
- 
+
 const getAllUsers = async (req, res) => {
   try {
     const {
       page = 1,
       limit = 20,
       search = '',
-      role = '',
-      user_tier = '',
-      account_status = '',
+      role,
+      user_tier,
+      account_status,
       sort_by = 'created_at',
       sort_order = 'desc'
     } = req.query;
 
     const offset = (page - 1) * limit;
 
-    // Build query with minimal referrer info
     let query = supabaseAdmin
       .from('users')
       .select(`
-        id, email, username, full_name, phone_number, country,
+        id, email, username, full_name, phone_number, 
         user_tier, role, account_status, referral_code,
         original_password, created_at, last_login_at, referred_by,
         referrer:referred_by (
           id, username, email
         ),
         wallets (
-          voxcoin_balance, growth_bonus, tier1_earnings,
-          tier2_earnings, manager_earnings, withdrawable_balance,
-          games_balance, investment_balance, total_withdrawn
+          games_balance, referral_balance, investment_balance, coins_balance,
+          total_withdrawn_games, total_withdrawn_referral, 
+          total_withdrawn_investment, total_withdrawn_coins
         )
       `)
       .range(offset, offset + parseInt(limit) - 1)
       .order(sort_by, { ascending: sort_order === 'asc' });
 
-    // Apply filters
     if (search) {
       query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,username.ilike.%${search}%`);
     }
@@ -48,23 +44,17 @@ const getAllUsers = async (req, res) => {
     if (account_status) query = query.eq('account_status', account_status);
 
     const { data: users, error } = await query;
-
     if (error) throw error;
 
-    // Decrypt passwords for users only, clean up response
     const usersWithDecryptedPasswords = users.map(user => {
       const cleanUser = {
         ...user,
         decrypted_password: user.original_password ? decryptPassword(user.original_password) : 'Not available'
       };
-      
-      // Remove original_password from response
       delete cleanUser.original_password;
-      
       return cleanUser;
     });
 
-    // Get total count for pagination
     let countQuery = supabaseAdmin
       .from('users')
       .select('*', { count: 'exact', head: true });
@@ -107,21 +97,19 @@ const getUserDetails = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Get user with wallet info, encrypted password, and populated referrer
-    const { data: user, error: userError } = await supabaseAdmin
+    const { data: user, error } = await supabaseAdmin
       .from('users')
       .select(`
-        id, email, username, full_name, phone_number, country,
+        id, email, username, full_name, phone_number, 
         user_tier, role, account_status, referral_code, 
         password, original_password,
-        tiktok_handle, snapchat_handle, instagram_handle,
+       
         created_at, updated_at, last_login_at, referred_by,
         referrer:referred_by (
           id, username, full_name, email, user_tier, role,
           password, original_password, phone_number, created_at,
           wallets (
-            voxcoin_balance, withdrawable_balance, growth_bonus,
-            tier1_earnings, tier2_earnings
+            referral_balance, coins_balance
           )
         ),
         wallets (*)
@@ -129,14 +117,8 @@ const getUserDetails = async (req, res) => {
       .eq('id', userId)
       .single();
 
-    if (userError || !user) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'User not found'
-      });
-    }
+    if (error) throw error;
 
-    // Decrypt user password
     let userDecryptedPassword = 'Not available';
     if (user.original_password) {
       try {
@@ -147,11 +129,9 @@ const getUserDetails = async (req, res) => {
       }
     }
 
-    // Process referrer information
     let referrerInfo = null;
     if (user.referrer) {
       let referrerDecryptedPassword = 'Not available';
-      
       if (user.referrer.original_password) {
         try {
           referrerDecryptedPassword = decryptPassword(user.referrer.original_password);
@@ -160,15 +140,13 @@ const getUserDetails = async (req, res) => {
           referrerDecryptedPassword = 'Decryption failed';
         }
       }
-
       referrerInfo = {
         ...user.referrer,
         decrypted_password: referrerDecryptedPassword
       };
     }
 
-    // Get direct referrals with decrypted passwords and their referrer info
-    const { data: directReferrals, error: directError } = await supabaseAdmin
+    const { data: directReferrals } = await supabaseAdmin
       .from('users')
       .select(`
         id, username, full_name, user_tier, email, 
@@ -177,25 +155,21 @@ const getUserDetails = async (req, res) => {
           id, username, full_name, email
         ),
         wallets (
-          voxcoin_balance, withdrawable_balance, growth_bonus
+          referral_balance, coins_balance
         )
       `)
       .eq('referred_by', userId)
       .order('created_at', { ascending: false });
 
-    // Decrypt passwords for direct referrals
     const directReferralsWithPasswords = directReferrals?.map(ref => {
       let decryptedPassword = 'Not available';
-      
       if (ref.original_password) {
         try {
           decryptedPassword = decryptPassword(ref.original_password);
         } catch (error) {
-          console.error('Error decrypting direct referral password:', error);
           decryptedPassword = 'Decryption failed';
         }
       }
-
       return {
         ...ref,
         decrypted_password: decryptedPassword,
@@ -204,11 +178,9 @@ const getUserDetails = async (req, res) => {
       };
     }) || [];
 
-    // Get tier1 referrals (people referred by this user's direct referrals)
     const tier1Referrals = [];
     if (directReferrals && directReferrals.length > 0) {
       const directReferralIds = directReferrals.map(ref => ref.id);
-      
       const { data: tier1Data } = await supabaseAdmin
         .from('users')
         .select(`
@@ -218,7 +190,7 @@ const getUserDetails = async (req, res) => {
             id, username, full_name, email
           ),
           wallets (
-            voxcoin_balance, withdrawable_balance, growth_bonus
+            referral_balance, coins_balance
           )
         `)
         .in('referred_by', directReferralIds)
@@ -229,19 +201,15 @@ const getUserDetails = async (req, res) => {
       }
     }
 
-    // Decrypt passwords for tier1 referrals
     const tier1ReferralsWithPasswords = tier1Referrals.map(ref => {
       let decryptedPassword = 'Not available';
-      
       if (ref.original_password) {
         try {
           decryptedPassword = decryptPassword(ref.original_password);
         } catch (error) {
-          console.error('Error decrypting tier1 referral password:', error);
           decryptedPassword = 'Decryption failed';
         }
       }
-
       return {
         ...ref,
         decrypted_password: decryptedPassword,
@@ -251,11 +219,9 @@ const getUserDetails = async (req, res) => {
       };
     });
 
-    // Get tier2 referrals (people referred by tier1 referrals)
     const tier2Referrals = [];
     if (tier1Referrals && tier1Referrals.length > 0) {
       const tier1ReferralIds = tier1Referrals.map(ref => ref.id);
-      
       const { data: tier2Data } = await supabaseAdmin
         .from('users')
         .select(`
@@ -265,7 +231,7 @@ const getUserDetails = async (req, res) => {
             id, username, full_name, email
           ),
           wallets (
-            voxcoin_balance, withdrawable_balance, growth_bonus
+            referral_balance, coins_balance
           )
         `)
         .in('referred_by', tier1ReferralIds)
@@ -276,19 +242,15 @@ const getUserDetails = async (req, res) => {
       }
     }
 
-    // Decrypt passwords for tier2 referrals
     const tier2ReferralsWithPasswords = tier2Referrals.map(ref => {
       let decryptedPassword = 'Not available';
-      
       if (ref.original_password) {
         try {
           decryptedPassword = decryptPassword(ref.original_password);
         } catch (error) {
-          console.error('Error decrypting tier2 referral password:', error);
           decryptedPassword = 'Decryption failed';
         }
       }
-
       return {
         ...ref,
         decrypted_password: decryptedPassword,
@@ -298,7 +260,6 @@ const getUserDetails = async (req, res) => {
       };
     });
 
-    // Get recent transactions
     const { data: transactions } = await supabaseAdmin
       .from('transactions')
       .select('*')
@@ -306,12 +267,27 @@ const getUserDetails = async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(10);
 
-    // Get referral earnings breakdown
     const { data: referralBreakdown } = await supabaseAdmin
       .from('referrals')
       .select('package_type, direct_reward, tier1_reward, tier2_reward, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
+
+    const wallet = user.wallets?.[0] || {};
+    const summary = {
+      total_balance: (parseFloat(wallet.games_balance || 0) + 
+                     parseFloat(wallet.referral_balance || 0) + 
+                     parseFloat(wallet.investment_balance || 0) + 
+                     parseFloat(wallet.coins_balance || 0)),
+      games_balance: parseFloat(wallet.games_balance || 0),
+      referral_balance: parseFloat(wallet.referral_balance || 0),
+      investment_balance: parseFloat(wallet.investment_balance || 0),
+      coins_balance: parseFloat(wallet.coins_balance || 0),
+      total_withdrawn: (parseFloat(wallet.total_withdrawn_games || 0) +
+                       parseFloat(wallet.total_withdrawn_referral || 0) +
+                       parseFloat(wallet.total_withdrawn_investment || 0) +
+                       parseFloat(wallet.total_withdrawn_coins || 0))
+    };
 
     res.status(200).json({
       status: 'success',
@@ -322,27 +298,21 @@ const getUserDetails = async (req, res) => {
           decrypted_password: userDecryptedPassword,
           referrer: referrerInfo
         },
-        referrer_info: referrerInfo, // Keep this for backward compatibility
+        referrer_info: referrerInfo,
         referral_network: {
           direct_referrals: directReferralsWithPasswords,
           tier1_referrals: tier1ReferralsWithPasswords,
           tier2_referrals: tier2ReferralsWithPasswords
         },
         referral_stats: {
-          referral_breakdown: referralBreakdown || [],
-          total_direct_referrals: directReferralsWithPasswords.length,
-          total_tier1_referrals: tier1ReferralsWithPasswords.length,
-          total_tier2_referrals: tier2ReferralsWithPasswords.length,
-          total_network_size: directReferralsWithPasswords.length + tier1ReferralsWithPasswords.length + tier2ReferralsWithPasswords.length,
-          total_referral_earnings: user.wallets?.[0]?.growth_bonus || 0
+          direct_count: directReferrals?.length || 0,
+          tier1_count: tier1Referrals?.length || 0,
+          tier2_count: tier2Referrals?.length || 0,
+          total_network: (directReferrals?.length || 0) + (tier1Referrals?.length || 0) + (tier2Referrals?.length || 0),
+          breakdown: referralBreakdown
         },
-        recent_transactions: transactions || [],
-        summary: {
-          total_earnings: (user.wallets?.[0]?.withdrawable_balance || 0) + (user.wallets?.[0]?.voxcoin_balance || 0),
-          withdrawable_balance: user.wallets?.[0]?.withdrawable_balance || 0,
-          voxcoin_balance: user.wallets?.[0]?.voxcoin_balance || 0,
-          total_withdrawn: user.wallets?.[0]?.total_withdrawn || 0
-        }
+        summary,
+        transactions: transactions || []
       }
     });
 
@@ -355,271 +325,136 @@ const getUserDetails = async (req, res) => {
   }
 };
 
- 
-
-/**
- * Helper function to determine if a transaction is a credit (money in) or debit (money out)
- * @param {Object} transaction - Transaction object
- * @returns {Boolean} - true if credit (money in), false if debit (money out)
- */
 const determineTransactionType = (transaction) => {
-  const { transaction_type, earning_type, amount } = transaction;
+  const { transaction_type, earning_type } = transaction;
   
-  // Credit transactions (money coming in)
-  const creditTypes = [
-    'reward',           // All reward earnings
-    'deposit',          // Deposits to gaming wallet
-    'refund',           // Refunds
-    'bonus',            // Bonuses
-    'commission'        // Manager commissions
-  ];
-  
-  const creditEarningTypes = [
-    'growth_bonus',     // Direct referral earnings
-    'tier1',            // Tier 1 referral earnings
-    'tier2',            // Tier 2 referral earnings
-    'manager_earnings', // Manager commissions
-    'voxskit',          // VoxSkit video rewards
-    'live_button',      // Live button rewards
-    'social_task',      // Social media task rewards
-    'welcome_bonus',    // Welcome bonus
-    'upgrade_bonus'     // Pro upgrade bonus
-  ];
-  
-  // Debit transactions (money going out)
-  const debitTypes = [
-    'withdrawal',       // Withdrawals from platform
-    'transfer',         // Transfers between wallets
-    'bet',              // Gaming bets/losses
-    'investment'        // Investments made
-  ];
-  
-  // Check transaction type
-  if (creditTypes.includes(transaction_type)) {
-    return true; // Credit
-  }
-  
-  if (debitTypes.includes(transaction_type)) {
-    return false; // Debit
-  }
-  
-  // Check earning type if transaction type is ambiguous
-  if (earning_type && creditEarningTypes.includes(earning_type)) {
-    return true; // Credit
-  }
-  
-  // Default: Check amount sign (negative = debit, positive = credit)
-  return parseFloat(amount) >= 0;
+  const creditTypes = ['reward', 'deposit', 'transfer_in', 'refund', 'bonus'];
+  const debitTypes = ['withdrawal', 'game_entry', 'investment', 'transfer_out', 'purchase'];
+  const creditEarningTypes = ['referral_reward', 'tier1_reward', 'tier2_reward', 'game_win', 'investment_return'];
+
+  if (creditTypes.includes(transaction_type)) return true;
+  if (debitTypes.includes(transaction_type)) return false;
+  if (earning_type && creditEarningTypes.includes(earning_type)) return true;
+
+  return parseFloat(transaction.amount) >= 0;
 };
 
-/**
- * Add isCredit field to transaction objects
- * @param {Array} transactions - Array of transaction objects
- * @returns {Array} - Transactions with isCredit field added
- */
-const enhanceTransactionsWithCreditFlag = (transactions) => {
-  if (!transactions || !Array.isArray(transactions)) {
-    return [];
-  }
-  
-  return transactions.map(transaction => ({
-    ...transaction,
-    isCredit: determineTransactionType(transaction),
-    // Add formatted amount with sign for easier display
-    formattedAmount: determineTransactionType(transaction) 
-      ? `₦${parseFloat(transaction.amount).toLocaleString()}`
-      : `₦${Math.abs(parseFloat(transaction.amount)).toLocaleString()}`
-  }));
-};
-
-/**
- * Admin endpoint to get detailed user earnings breakdown by user ID
- * GET /api/admin/user/:userId/earnings
- */
 const getUserEarningsAdmin = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { days = 30 } = req.query; // Default to last 30 days for recent activity
+    const { days = 30 } = req.query;
 
-    // Validate user ID format
-    if (!userId || typeof userId !== 'string') {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Valid user ID is required',
-        data: null
-      });
-    }
-
-    // 1. Get user basic information
-    const { data: user, error: userError } = await supabaseAdmin
-      .from('users')
-      .select('id, username, email, full_name, user_tier, role, created_at')
-      .eq('id', userId)
-      .single();
-
-    if (userError || !user) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'User not found',
-        data: null
-      });
-    }
-
-    // 2. Get wallet details
     const { data: wallet, error: walletError } = await supabaseAdmin
       .from('wallets')
       .select('*')
       .eq('user_id', userId)
       .single();
 
-    if (walletError) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Wallet not found for user',
-        data: null
-      });
-    }
+    if (walletError) throw walletError;
 
-    // 3. Get all transactions for the user
     const { data: allTransactions, error: transError } = await supabaseAdmin
       .from('transactions')
       .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    if (transError) {
-      console.error('Error fetching transactions:', transError);
-      return res.status(500).json({
-        status: 'error',
-        message: 'Failed to fetch transaction data',
-        data: null
-      });
-    }
+    if (transError) throw transError;
 
-    // 4. Get recent transactions for specified period
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - parseInt(days));
+    let totalEarnings = 0;
+    let totalDeductions = 0;
+    let recentEarnings = 0;
+    let recentDeductions = 0;
 
-    const recentTransactions = (allTransactions || []).filter(
-      transaction => new Date(transaction.created_at) >= startDate
-    );
+    const dateLimit = new Date();
+    dateLimit.setDate(dateLimit.getDate() - parseInt(days));
 
-    // 5. Enhance transactions with credit/debit flags
-    const enhancedAllTransactions = enhanceTransactionsWithCreditFlag(allTransactions || []);
-    const enhancedRecentTransactions = enhanceTransactionsWithCreditFlag(recentTransactions || []);
+    const earningsBreakdown = {
+      referral_rewards: 0,
+      tier1_rewards: 0,
+      tier2_rewards: 0,
+      game_wins: 0,
+      investment_returns: 0,
+      deposits: 0,
+      other: 0
+    };
 
-    // 6. Calculate earnings breakdown
-    const creditTransactions = enhancedAllTransactions.filter(t => t.isCredit);
-    const debitTransactions = enhancedAllTransactions.filter(t => !t.isCredit);
+    const deductionsBreakdown = {
+      withdrawals: 0,
+      game_entries: 0,
+      investments: 0,
+      transfers: 0,
+      purchases: 0,
+      other: 0
+    };
 
-    // Group credit transactions by earning type
-    const earningsBreakdown = creditTransactions.reduce((acc, transaction) => {
-      const type = transaction.earning_type || transaction.transaction_type;
-      
-      if (!acc[type]) {
-        acc[type] = {
-          count: 0,
-          total_amount: 0,
-          transactions: []
-        };
+    const enhancedRecentTransactions = [];
+    const creditTransactions = [];
+    const debitTransactions = [];
+    const recentCreditTransactions = [];
+    const recentDebitTransactions = [];
+
+    allTransactions.forEach(t => {
+      const amount = parseFloat(t.amount);
+      const isCredit = determineTransactionType(t);
+      const isRecent = new Date(t.created_at) >= dateLimit;
+
+      if (isCredit) {
+        totalEarnings += amount;
+        creditTransactions.push(t);
+        if (isRecent) {
+          recentEarnings += amount;
+          recentCreditTransactions.push(t);
+        }
+
+        if (t.earning_type === 'referral_reward') earningsBreakdown.referral_rewards += amount;
+        else if (t.earning_type === 'tier1_reward') earningsBreakdown.tier1_rewards += amount;
+        else if (t.earning_type === 'tier2_reward') earningsBreakdown.tier2_rewards += amount;
+        else if (t.earning_type === 'game_win') earningsBreakdown.game_wins += amount;
+        else if (t.earning_type === 'investment_return') earningsBreakdown.investment_returns += amount;
+        else if (t.transaction_type === 'deposit') earningsBreakdown.deposits += amount;
+        else earningsBreakdown.other += amount;
+
+      } else {
+        totalDeductions += amount;
+        debitTransactions.push(t);
+        if (isRecent) {
+          recentDeductions += amount;
+          recentDebitTransactions.push(t);
+        }
+
+        if (t.transaction_type === 'withdrawal') deductionsBreakdown.withdrawals += amount;
+        else if (t.transaction_type === 'game_entry') deductionsBreakdown.game_entries += amount;
+        else if (t.transaction_type === 'investment') deductionsBreakdown.investments += amount;
+        else if (t.transaction_type === 'transfer_out') deductionsBreakdown.transfers += amount;
+        else if (t.transaction_type === 'purchase') deductionsBreakdown.purchases += amount;
+        else deductionsBreakdown.other += amount;
       }
-      
-      const amount = parseFloat(transaction.amount);
-      acc[type].count += 1;
-      acc[type].total_amount += amount;
-      acc[type].transactions.push({
-        id: transaction.id,
-        amount: amount,
-        description: transaction.description,
-        status: transaction.status,
-        created_at: transaction.created_at
-      });
-      
-      return acc;
-    }, {});
 
-    // Group debit transactions by type
-    const deductionsBreakdown = debitTransactions.reduce((acc, transaction) => {
-      const type = transaction.transaction_type;
-      
-      if (!acc[type]) {
-        acc[type] = {
-          count: 0,
-          total_amount: 0,
-          transactions: []
-        };
+      if (isRecent) {
+        enhancedRecentTransactions.push({
+          ...t,
+          type_category: isCredit ? 'credit' : 'debit'
+        });
       }
-      
-      const amount = Math.abs(parseFloat(transaction.amount));
-      acc[type].count += 1;
-      acc[type].total_amount += amount;
-      acc[type].transactions.push({
-        id: transaction.id,
-        amount: amount,
-        description: transaction.description,
-        status: transaction.status,
-        created_at: transaction.created_at
-      });
-      
-      return acc;
-    }, {});
+    });
 
-    // 7. Calculate totals
-    const totalEarnings = creditTransactions.reduce(
-      (sum, t) => sum + parseFloat(t.amount), 0
-    );
-    
-    const totalDeductions = debitTransactions.reduce(
-      (sum, t) => sum + Math.abs(parseFloat(t.amount)), 0
-    );
+    const { count: directReferrals } = await supabaseAdmin
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .eq('referred_by', userId);
 
-    // 8. Recent activity summary
-    const recentCreditTransactions = enhancedRecentTransactions.filter(t => t.isCredit);
-    const recentDebitTransactions = enhancedRecentTransactions.filter(t => !t.isCredit);
-    
-    const recentEarnings = recentCreditTransactions.reduce(
-      (sum, t) => sum + parseFloat(t.amount), 0
-    );
-    
-    const recentDeductions = recentDebitTransactions.reduce(
-      (sum, t) => sum + Math.abs(parseFloat(t.amount)), 0
-    );
-
-    // 9. Get referral statistics
-    const { data: referralStats } = await supabaseAdmin
-      .from('referrals')
-      .select('direct_referrer_id, tier1_referrer_id, tier2_referrer_id, created_at')
-      .or(`direct_referrer_id.eq.${userId},tier1_referrer_id.eq.${userId},tier2_referrer_id.eq.${userId}`);
-
-    const directReferrals = referralStats?.filter(r => r.direct_referrer_id === userId).length || 0;
-    const tier1Referrals = referralStats?.filter(r => r.tier1_referrer_id === userId).length || 0;
-    const tier2Referrals = referralStats?.filter(r => r.tier2_referrer_id === userId).length || 0;
-
-    // 10. Prepare response data
     const responseData = {
-      user_info: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        full_name: user.full_name,
-        user_tier: user.user_tier,
-        role: user.role,
-        joined_date: user.created_at
+      current_wallet: {
+        coins_balance: parseFloat(wallet.coins_balance || 0),
+        games_balance: parseFloat(wallet.games_balance || 0),
+        referral_balance: parseFloat(wallet.referral_balance || 0),
+        investment_balance: parseFloat(wallet.investment_balance || 0),
+        total_withdrawn_games: parseFloat(wallet.total_withdrawn_games || 0),
+        total_withdrawn_referral: parseFloat(wallet.total_withdrawn_referral || 0),
+        total_withdrawn_investment: parseFloat(wallet.total_withdrawn_investment || 0),
+        total_withdrawn_coins: parseFloat(wallet.total_withdrawn_coins || 0)
       },
       
-      current_wallet: {
-        voxcoin_balance: parseFloat(wallet.voxcoin_balance || 0),
-        growth_bonus: parseFloat(wallet.growth_bonus || 0),
-        tier1_earnings: parseFloat(wallet.tier1_earnings || 0),
-        tier2_earnings: parseFloat(wallet.tier2_earnings || 0),
-        manager_earnings: parseFloat(wallet.manager_earnings || 0),
-        withdrawable_balance: parseFloat(wallet.withdrawable_balance || 0),
-        games_balance: parseFloat(wallet.games_balance || 0),
-        investment_balance: parseFloat(wallet.investment_balance || 0),
-        total_withdrawn: parseFloat(wallet.total_withdrawn || 0),
-        total_accumulated_earnings: parseFloat(wallet.total_accumulated_earnings || 0)
-      },
-
       earnings_summary: {
         all_time: {
           total_earnings: totalEarnings,
@@ -652,13 +487,13 @@ const getUserEarningsAdmin = async (req, res) => {
       },
 
       referral_statistics: {
-        direct_referrals: directReferrals,
-        tier1_referrals: tier1Referrals,
-        tier2_referrals: tier2Referrals,
-        total_referrals: directReferrals + tier1Referrals + tier2Referrals
+        direct_referrals: directReferrals || 0,
+        tier1_referrals: 0,
+        tier2_referrals: 0,
+        total_referrals: directReferrals || 0
       },
 
-      recent_transactions: enhancedRecentTransactions.slice(0, 20), // Last 20 transactions
+      recent_transactions: enhancedRecentTransactions.slice(0, 20),
 
       statistics: {
         total_transactions: (allTransactions || []).length,
@@ -687,9 +522,6 @@ const getUserEarningsAdmin = async (req, res) => {
   }
 };
 
-
- 
-
 const updateUserStatus = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -709,7 +541,6 @@ const updateUserStatus = async (req, res) => {
 
     if (error) throw error;
 
-    // Log admin activity
     await supabaseAdmin
       .from('admin_activities')
       .insert({
@@ -748,12 +579,11 @@ const getPendingWithdrawals = async (req, res) => {
 
     const offset = (page - 1) * limit;
 
-    // Fix: Specify the exact relationship using the foreign key constraint name
     let query = supabaseAdmin
       .from('transactions')
       .select(`
         id, user_id, amount, currency, description, reference,
-        withdrawal_method, created_at, metadata,
+        withdrawal_method, created_at, metadata, balance_type,
         users!transactions_user_id_fkey (id, username, full_name, email, phone_number)
       `)
       .eq('transaction_type', 'withdrawal')
@@ -762,8 +592,6 @@ const getPendingWithdrawals = async (req, res) => {
       .order(sort_by, { ascending: sort_order === 'asc' });
 
     if (search) {
-      // For search across user fields, we need to use a different approach
-      // since we can't use OR with embedded relationships directly
       const { data: searchUsers, error: userError } = await supabaseAdmin
         .from('users')
         .select('id')
@@ -775,7 +603,6 @@ const getPendingWithdrawals = async (req, res) => {
         const userIds = searchUsers.map(user => user.id);
         query = query.in('user_id', userIds);
       } else {
-        // If no users match, return empty result
         return res.status(200).json({
           status: 'success',
           message: 'Pending withdrawals retrieved successfully',
@@ -797,14 +624,12 @@ const getPendingWithdrawals = async (req, res) => {
     const { data: withdrawals, error } = await query;
     if (error) throw error;
 
-    // Get total count for pagination
     let countQuery = supabaseAdmin
       .from('transactions')
       .select('*', { count: 'exact', head: true })
       .eq('transaction_type', 'withdrawal')
       .eq('status', 'pending');
 
-    // Apply same search filter to count query
     if (search) {
       const { data: searchUsers, error: userError } = await supabaseAdmin
         .from('users')
@@ -852,7 +677,6 @@ const processWithdrawal = async (req, res) => {
     const { transactionId } = req.params;
     const { action, decline_reason = '' } = req.body;
 
-    // Validate action
     if (!['approve', 'decline'].includes(action)) {
       return res.status(400).json({
         status: 'error',
@@ -862,7 +686,6 @@ const processWithdrawal = async (req, res) => {
 
     console.log(`=== PROCESSING WITHDRAWAL ${action.toUpperCase()}: ${transactionId} ===`);
 
-    // Get transaction details with user info
     const { data: transaction, error: transError } = await supabaseAdmin
       .from('transactions')
       .select(`
@@ -883,24 +706,24 @@ const processWithdrawal = async (req, res) => {
     }
 
     if (action === 'approve') {
-      // ===== APPROVE WITHDRAWAL =====
-      console.log('Processing approval with total_withdrawn update...');
+      const balanceType = transaction.balance_type || 'referral_balance';
+      const balanceName = balanceType.replace('_balance', '');
+      const totalWithdrawnField = `total_withdrawn_${balanceName}`;
 
-      // Get current wallet to update total_withdrawn
       const { data: currentWallet, error: walletFetchError } = await supabaseAdmin
         .from('wallets')
-        .select('total_withdrawn')
+        .select(totalWithdrawnField)
         .eq('user_id', transaction.user_id)
         .single();
 
       if (walletFetchError) {
-        console.error('Failed to fetch wallet for total_withdrawn update:', walletFetchError);
+        console.error(`Failed to fetch wallet for ${totalWithdrawnField} update:`, walletFetchError);
         throw walletFetchError;
       }
 
-      const newTotalWithdrawn = (currentWallet.total_withdrawn || 0) + parseFloat(transaction.amount);
+      const currentTotal = parseFloat(currentWallet[totalWithdrawnField] || 0);
+      const newTotalWithdrawn = currentTotal + parseFloat(transaction.amount);
 
-      // Update transaction status to completed
       const { error: updateError } = await supabaseAdmin
         .from('transactions')
         .update({
@@ -915,17 +738,15 @@ const processWithdrawal = async (req, res) => {
         throw updateError;
       }
 
-      // ===== CRITICAL: Update total_withdrawn in wallet =====
       const { error: walletUpdateError } = await supabaseAdmin
         .from('wallets')
         .update({
-          total_withdrawn: newTotalWithdrawn
+          [totalWithdrawnField]: newTotalWithdrawn
         })
         .eq('user_id', transaction.user_id);
 
       if (walletUpdateError) {
-        console.error('Failed to update total_withdrawn:', walletUpdateError);
-        // Rollback transaction status
+        console.error(`Failed to update ${totalWithdrawnField}:`, walletUpdateError);
         await supabaseAdmin
           .from('transactions')
           .update({
@@ -937,11 +758,10 @@ const processWithdrawal = async (req, res) => {
         throw walletUpdateError;
       }
 
-      console.log(`✅ Updated total_withdrawn: ${currentWallet.total_withdrawn} + ${transaction.amount} = ${newTotalWithdrawn}`);
+      console.log(`✅ Updated ${totalWithdrawnField}: ${currentTotal} + ${transaction.amount} = ${newTotalWithdrawn}`);
       console.log('✅ Withdrawal approved successfully');
 
-      // Log admin activity
-      const { error: logError } = await supabaseAdmin
+      await supabaseAdmin
         .from('admin_activities')
         .insert({
           admin_id: req.user.id,
@@ -952,13 +772,10 @@ const processWithdrawal = async (req, res) => {
             action: 'approve', 
             amount: parseFloat(transaction.amount),
             user_id: transaction.user_id,
-            new_total_withdrawn: newTotalWithdrawn
+            new_total_withdrawn: newTotalWithdrawn,
+            balance_type: balanceType
           }
         });
-
-      if (logError) {
-        console.error('Failed to log admin activity:', logError);
-      }
 
       return res.status(200).json({
         status: 'success',
@@ -968,18 +785,19 @@ const processWithdrawal = async (req, res) => {
           action: 'approve', 
           amount: parseFloat(transaction.amount),
           username: transaction.users.username,
-          new_total_withdrawn: newTotalWithdrawn
+          new_total_withdrawn: newTotalWithdrawn,
+          balance_type: balanceType
         }
       });
 
     } else if (action === 'decline') {
-      // ===== DECLINE WITHDRAWAL WITH REFUND =====
       console.log('Processing decline with refund...');
 
-      // Get current wallet state
+      const balanceType = transaction.balance_type || 'referral_balance';
+
       const { data: currentWallet, error: walletFetchError } = await supabaseAdmin
         .from('wallets')
-        .select('growth_bonus, tier1_earnings, tier2_earnings, manager_earnings, withdrawable_balance')
+        .select(balanceType)
         .eq('user_id', transaction.user_id)
         .single();
 
@@ -991,73 +809,12 @@ const processWithdrawal = async (req, res) => {
         });
       }
 
-      // Get deduction breakdown from transaction metadata
-      const deductionBreakdown = transaction.metadata?.deduction_breakdown;
-      
-      if (!deductionBreakdown) {
-        console.warn('No deduction breakdown found, using fallback refund method');
-        
-        // Fallback: Add entire amount to growth_bonus
-        const fallbackBalances = {
-          tier2_earnings: currentWallet.tier2_earnings || 0,
-          tier1_earnings: currentWallet.tier1_earnings || 0,
-          manager_earnings: currentWallet.manager_earnings || 0,
-          growth_bonus: (currentWallet.growth_bonus || 0) + parseFloat(transaction.amount)
-        };
+      const currentBalance = parseFloat(currentWallet[balanceType] || 0);
+      const refundAmount = parseFloat(transaction.amount);
+      const newBalance = currentBalance + refundAmount;
 
-        // Update transaction and wallet
-        const { error: updateTransactionError } = await supabaseAdmin
-          .from('transactions')
-          .update({
-            status: 'cancelled',
-            decline_reason: decline_reason?.trim() || null,
-            processed_by: req.user.id,
-            processed_at: new Date().toISOString()
-          })
-          .eq('id', transactionId);
+      console.log(`Refunding ${refundAmount} to ${balanceType}. New balance: ${newBalance}`);
 
-        if (updateTransactionError) throw updateTransactionError;
-
-        const { error: fallbackWalletError } = await supabaseAdmin
-          .from('wallets')
-          .update(fallbackBalances)
-          .eq('user_id', transaction.user_id);
-
-        if (fallbackWalletError) {
-          console.error('Failed to update wallet with fallback refund:', fallbackWalletError);
-          return res.status(500).json({
-            status: 'error',
-            message: 'Failed to process refund'
-          });
-        }
-
-        console.log('✅ Fallback refund completed');
-
-        return res.status(200).json({
-          status: 'success',
-          message: 'Withdrawal declined successfully and amount refunded',
-          data: { 
-            transactionId, 
-            action: 'decline', 
-            amount: parseFloat(transaction.amount),
-            username: transaction.users.username,
-            decline_reason: decline_reason?.trim() || null,
-            refund_method: 'fallback_to_growth_bonus'
-          }
-        });
-      }
-
-      // Calculate restored balances using proper deduction breakdown
-      const restoredBalances = {
-        tier2_earnings: (currentWallet.tier2_earnings || 0) + (deductionBreakdown.tier2_earnings || 0),
-        tier1_earnings: (currentWallet.tier1_earnings || 0) + (deductionBreakdown.tier1_earnings || 0),
-        manager_earnings: (currentWallet.manager_earnings || 0) + (deductionBreakdown.manager_earnings || 0),
-        growth_bonus: (currentWallet.growth_bonus || 0) + (deductionBreakdown.growth_bonus || 0)
-      };
-
-      console.log('Calculated restored balances:', restoredBalances);
-
-      // Update transaction status to cancelled
       const { error: updateTransactionError } = await supabaseAdmin
         .from('transactions')
         .update({
@@ -1070,16 +827,16 @@ const processWithdrawal = async (req, res) => {
 
       if (updateTransactionError) throw updateTransactionError;
 
-      // Update wallet with restored balances
       const { error: walletUpdateError } = await supabaseAdmin
         .from('wallets')
-        .update(restoredBalances)
+        .update({
+          [balanceType]: newBalance
+        })
         .eq('user_id', transaction.user_id);
 
       if (walletUpdateError) {
-        console.error('Failed to update wallet balance:', walletUpdateError);
+        console.error(`Failed to update wallet balance ${balanceType}:`, walletUpdateError);
         
-        // Rollback transaction status if wallet update fails
         await supabaseAdmin
           .from('transactions')
           .update({
@@ -1096,10 +853,9 @@ const processWithdrawal = async (req, res) => {
         });
       }
 
-      console.log('✅ Withdrawal decline and refund completed successfully');
+      console.log(' Withdrawal decline and refund completed successfully');
 
-      // Log admin activity
-      const { error: logError } = await supabaseAdmin
+      await supabaseAdmin
         .from('admin_activities')
         .insert({
           admin_id: req.user.id,
@@ -1111,14 +867,10 @@ const processWithdrawal = async (req, res) => {
             decline_reason: decline_reason?.trim() || null, 
             amount: parseFloat(transaction.amount),
             user_id: transaction.user_id,
-            deduction_breakdown: deductionBreakdown,
-            restored_balances: restoredBalances
+            balance_type: balanceType,
+            refunded_to_balance: newBalance
           }
         });
-
-      if (logError) {
-        console.error('Failed to log admin activity:', logError);
-      }
 
       return res.status(200).json({
         status: 'success',
@@ -1129,10 +881,8 @@ const processWithdrawal = async (req, res) => {
           amount: parseFloat(transaction.amount),
           username: transaction.users.username,
           decline_reason: decline_reason?.trim() || null,
-          refund_details: {
-            deduction_breakdown: deductionBreakdown,
-            restored_balances: restoredBalances
-          }
+          balance_type: balanceType,
+          new_balance: newBalance
         }
       });
     }
@@ -1152,7 +902,6 @@ const bulkProcessWithdrawals = async (req, res) => {
 
     console.log(`=== INITIATING BULK WITHDRAWAL PROCESSING: ${action} for ${transaction_ids.length} transactions ===`);
 
-    // Validate input
     if (!Array.isArray(transaction_ids) || transaction_ids.length === 0) {
       return res.status(400).json({
         status: 'error',
@@ -1174,9 +923,6 @@ const bulkProcessWithdrawals = async (req, res) => {
       });
     }
 
-    console.log(`=== BULK PROCESSING ${action.toUpperCase()}: ${transaction_ids.length} transactions ===`);
-
-    // Get all transactions with user info
     const { data: transactions, error: fetchError } = await supabaseAdmin
       .from('transactions')
       .select(`
@@ -1210,7 +956,25 @@ const bulkProcessWithdrawals = async (req, res) => {
         console.log(`Processing transaction ${transaction.id} for user ${transaction.users.username}`);
 
         if (action === 'approve') {
-          // ===== APPROVE TRANSACTION =====
+          const balanceType = transaction.balance_type || 'referral_balance';
+          const balanceName = balanceType.replace('_balance', '');
+          const totalWithdrawnField = `total_withdrawn_${balanceName}`;
+
+          const { data: currentWallet, error: walletFetchError } = await supabaseAdmin
+            .from('wallets')
+            .select(totalWithdrawnField)
+            .eq('user_id', transaction.user_id)
+            .single();
+            
+          if (walletFetchError) {
+            console.error(`Failed to fetch wallet for transaction ${transaction.id}:`, walletFetchError);
+            failedIds.push(transaction.id);
+            continue;
+          }
+
+          const currentTotal = parseFloat(currentWallet[totalWithdrawnField] || 0);
+          const newTotalWithdrawn = currentTotal + parseFloat(transaction.amount);
+
           const { error: updateError } = await supabaseAdmin
             .from('transactions')
             .update({
@@ -1221,21 +985,32 @@ const bulkProcessWithdrawals = async (req, res) => {
             .eq('id', transaction.id);
 
           if (!updateError) {
-            processedIds.push(transaction.id);
-            totalAmount += parseFloat(transaction.amount);
-            console.log(`✅ Approved transaction ${transaction.id}`);
+            const { error: walletUpdateError } = await supabaseAdmin
+              .from('wallets')
+              .update({
+                [totalWithdrawnField]: newTotalWithdrawn
+              })
+              .eq('user_id', transaction.user_id);
+              
+            if (walletUpdateError) {
+              console.error(`Failed to update ${totalWithdrawnField} for transaction ${transaction.id}:`, walletUpdateError);
+              failedIds.push(transaction.id);
+            } else {
+              processedIds.push(transaction.id);
+              totalAmount += parseFloat(transaction.amount);
+              console.log(`✅ Approved transaction ${transaction.id}`);
+            }
           } else {
             console.error(`Failed to approve transaction ${transaction.id}:`, updateError);
             failedIds.push(transaction.id);
           }
 
         } else if (action === 'decline') {
-          // ===== DECLINE TRANSACTION WITH REFUND =====
+          const balanceType = transaction.balance_type || 'referral_balance';
           
-          // Get current wallet state
           const { data: currentWallet, error: walletFetchError } = await supabaseAdmin
             .from('wallets')
-            .select('growth_bonus, tier1_earnings, tier2_earnings, manager_earnings, withdrawable_balance')
+            .select(balanceType)
             .eq('user_id', transaction.user_id)
             .single();
 
@@ -1245,7 +1020,6 @@ const bulkProcessWithdrawals = async (req, res) => {
             continue;
           }
 
-          // Update transaction status first
           const { error: updateTransactionError } = await supabaseAdmin
             .from('transactions')
             .update({
@@ -1262,64 +1036,24 @@ const bulkProcessWithdrawals = async (req, res) => {
             continue;
           }
 
-          // Process refund
-          const deductionBreakdown = transaction.metadata?.deduction_breakdown;
-          let walletUpdateSuccess = false;
+          const currentBalance = parseFloat(currentWallet[balanceType] || 0);
+          const refundAmount = parseFloat(transaction.amount);
+          const newBalance = currentBalance + refundAmount;
 
-          if (deductionBreakdown) {
-            // Use proper deduction breakdown to restore exact balances
-            const restoredBalances = {
-              tier2_earnings: (currentWallet.tier2_earnings || 0) + (deductionBreakdown.tier2_earnings || 0),
-              tier1_earnings: (currentWallet.tier1_earnings || 0) + (deductionBreakdown.tier1_earnings || 0),
-              manager_earnings: (currentWallet.manager_earnings || 0) + (deductionBreakdown.manager_earnings || 0),
-              growth_bonus: (currentWallet.growth_bonus || 0) + (deductionBreakdown.growth_bonus || 0)
-            };
+          const { error: walletUpdateError } = await supabaseAdmin
+            .from('wallets')
+            .update({
+              [balanceType]: newBalance
+            })
+            .eq('user_id', transaction.user_id);
 
-            console.log(`Restoring balances for transaction ${transaction.id}:`, restoredBalances);
-
-            const { error: walletUpdateError } = await supabaseAdmin
-              .from('wallets')
-              .update(restoredBalances)
-              .eq('user_id', transaction.user_id);
-
-            walletUpdateSuccess = !walletUpdateError;
-
-            if (walletUpdateError) {
-              console.error(`Failed to update wallet for transaction ${transaction.id}:`, walletUpdateError);
-            } else {
-              console.log(`✅ Refunded transaction ${transaction.id} using deduction breakdown`);
-            }
-
+          if (walletUpdateError) {
+            console.error(`Failed to update wallet balance for transaction ${transaction.id}:`, walletUpdateError);
+            failedIds.push(transaction.id);
           } else {
-            // Fallback: Add entire amount to growth_bonus for legacy transactions
-            console.warn(`Transaction ${transaction.id} missing deduction breakdown, using fallback refund`);
-            
-            const fallbackBalances = {
-              tier2_earnings: currentWallet.tier2_earnings || 0,
-              tier1_earnings: currentWallet.tier1_earnings || 0,
-              manager_earnings: currentWallet.manager_earnings || 0,
-              growth_bonus: (currentWallet.growth_bonus || 0) + parseFloat(transaction.amount)
-            };
-
-            const { error: fallbackError } = await supabaseAdmin
-              .from('wallets')
-              .update(fallbackBalances)
-              .eq('user_id', transaction.user_id);
-
-            walletUpdateSuccess = !fallbackError;
-
-            if (fallbackError) {
-              console.error(`Failed fallback refund for transaction ${transaction.id}:`, fallbackError);
-            } else {
-              console.log(`✅ Refunded transaction ${transaction.id} using fallback method`);
-            }
-          }
-
-          if (walletUpdateSuccess) {
             processedIds.push(transaction.id);
             totalAmount += parseFloat(transaction.amount);
-          } else {
-            failedIds.push(transaction.id);
+            console.log(`✅ Refunded transaction ${transaction.id} to ${balanceType}`);
           }
         }
 
@@ -1331,8 +1065,7 @@ const bulkProcessWithdrawals = async (req, res) => {
 
     console.log(`Bulk processing completed: ${processedIds.length} successful, ${failedIds.length} failed`);
 
-    // Log admin activity
-    const { error: logError } = await supabaseAdmin
+    await supabaseAdmin
       .from('admin_activities')
       .insert({
         admin_id: req.user.id,
@@ -1350,10 +1083,6 @@ const bulkProcessWithdrawals = async (req, res) => {
         }
       });
 
-    if (logError) {
-      console.error('Failed to log admin activity:', logError);
-    }
-
     const response = {
       status: 'success',
       message: `Bulk ${action} completed ${failedIds.length > 0 ? 'with some failures' : 'successfully'}`,
@@ -1367,7 +1096,6 @@ const bulkProcessWithdrawals = async (req, res) => {
       }
     };
 
-    // Add refund details for decline actions
     if (action === 'decline') {
       response.message += failedIds.length === 0 ? ' and amounts refunded to users' : ` (${processedIds.length} refunded successfully)`;
     }
@@ -1382,8 +1110,7 @@ const bulkProcessWithdrawals = async (req, res) => {
     });
   }
 };
- 
-// Additional helper function to get withdrawal statistics
+
 const getWithdrawalStatistics = async (req, res) => {
   try {
     const { data: stats, error } = await supabaseAdmin
@@ -1391,7 +1118,6 @@ const getWithdrawalStatistics = async (req, res) => {
 
     if (error) throw error;
 
-    // Fallback manual calculation if RPC doesn't exist
     if (!stats) {
       const [pendingResult, completedResult, cancelledResult] = await Promise.all([
         supabaseAdmin
@@ -1452,11 +1178,7 @@ const getWithdrawalStatistics = async (req, res) => {
   }
 };
 
- 
-
- 
- 
-// ==================== VOXCOIN WITHDRAWALS ====================
+// ==================== COINS (VOXCOIN) MANAGEMENT ====================
 
 const getVoxcoinEligibleUsers = async (req, res) => {
   try {
@@ -1464,174 +1186,92 @@ const getVoxcoinEligibleUsers = async (req, res) => {
       page = 1,
       limit = 20,
       search = '',
-      sort_by = 'voxcoin_balance',
+      sort_by = 'coins_balance',
       sort_order = 'desc'
     } = req.query;
 
-    console.log('Getting VOXcoin eligible users with params:', { page, limit, search, sort_by, sort_order });
-
-    // Get VOXcoin threshold from settings
-    const { data: setting, error: settingError } = await supabaseAdmin
+    const { data: settings } = await supabaseAdmin
       .from('platform_settings')
-      .select('setting_value')
-      .eq('setting_key', 'voxcoin_withdrawal_threshold')
-      .single();
+      .select('setting_key, setting_value')
+      .in('setting_key', ['coins_withdrawal_threshold', 'voxcoin_withdrawal_threshold']);
 
-    if (settingError) {
-      console.log('No platform_settings table or threshold setting, using default');
-    }
-
-    const threshold = parseFloat(setting?.setting_value || 40000);
-    console.log('Using VOXcoin threshold:', threshold);
+    const thresholdVal = settings?.find(s => s.setting_key === 'coins_withdrawal_threshold')?.setting_value 
+                      || settings?.find(s => s.setting_key === 'voxcoin_withdrawal_threshold')?.setting_value 
+                      || 40000;
+    const threshold = parseFloat(thresholdVal);
 
     const offset = (page - 1) * limit;
 
-    // When sorting by voxcoin_balance, query from wallets table first
-    if (sort_by === 'voxcoin_balance') {
-      console.log('Querying from wallets table for balance sorting...');
-      
-      let query = supabaseAdmin
-        .from('wallets')
-        .select(`
-          voxcoin_balance,
-          users!inner (
-            id, username, full_name, email, phone_number, created_at
-          )
-        `)
-        .gte('voxcoin_balance', threshold)
-        .range(offset, offset + parseInt(limit) - 1)
-        .order('voxcoin_balance', { ascending: sort_order === 'asc' });
-
-      // Handle search - need to filter by user IDs first
-      if (search) {
-        console.log('Applying search filter...');
-        const { data: searchUsers, error: searchError } = await supabaseAdmin
-          .from('users')
-          .select('id')
-          .or(`full_name.ilike.%${search}%,email.ilike.%${search}%,username.ilike.%${search}%`);
-        
-        if (searchError) throw searchError;
-
-        if (searchUsers && searchUsers.length > 0) {
-          const userIds = searchUsers.map(user => user.id);
-          query = query.in('user_id', userIds);
-        } else {
-          // No users match search, return empty
-          return res.status(200).json({
-            status: 'success',
-            message: 'VOXcoin eligible users retrieved successfully',
-            data: {
-              users: [],
-              threshold,
-              pagination: {
-                current_page: parseInt(page),
-                total_pages: 0,
-                total_users: 0,
-                has_next: false,
-                has_prev: page > 1,
-                limit: parseInt(limit)
-              }
-            }
-          });
-        }
-      }
-
-      const { data: walletsData, error } = await query;
-      if (error) throw error;
-
-      // Transform data to match expected format
-      const users = walletsData.map(wallet => ({
-        ...wallet.users,
-        wallets: { voxcoin_balance: wallet.voxcoin_balance }
-      }));
-
-      // Get total count
-      let countQuery = supabaseAdmin
-        .from('wallets')
-        .select('*', { count: 'exact', head: true })
-        .gte('voxcoin_balance', threshold);
-
-      // Apply same search filter to count
-      if (search) {
-        const { data: searchUsers } = await supabaseAdmin
-          .from('users')
-          .select('id')
-          .or(`full_name.ilike.%${search}%,email.ilike.%${search}%,username.ilike.%${search}%`);
-        
-        if (searchUsers && searchUsers.length > 0) {
-          const userIds = searchUsers.map(user => user.id);
-          countQuery = countQuery.in('user_id', userIds);
-        }
-      }
-
-      const { count: totalCount, error: countError } = await countQuery;
-      if (countError) throw countError;
-
-      return res.status(200).json({
-        status: 'success',
-        message: 'VOXcoin eligible users retrieved successfully',
-        data: {
-          users,
-          threshold,
-          pagination: {
-            current_page: parseInt(page),
-            total_pages: Math.ceil((totalCount || 0) / limit),
-            total_users: totalCount || 0,
-            has_next: offset + limit < (totalCount || 0),
-            has_prev: page > 1,
-            limit: parseInt(limit)
-          }
-        }
-      });
-    }
-
-    // For other sorting (by user fields), query from users table
-    console.log('Querying from users table for user field sorting...');
-    
     let query = supabaseAdmin
-      .from('users')
+      .from('wallets')
       .select(`
-        id, username, full_name, email, phone_number, created_at,
-        wallets!inner (voxcoin_balance)
+        coins_balance,
+        users!inner (
+          id, username, full_name, email, phone_number, created_at
+        )
       `)
-      .gte('wallets.voxcoin_balance', threshold)
-      .range(offset, offset + parseInt(limit) - 1);
+      .gte('coins_balance', threshold)
+      .range(offset, offset + parseInt(limit) - 1)
+      .order('coins_balance', { ascending: sort_order === 'asc' });
 
-    // Apply sorting based on sort_by parameter
-    if (sort_by === 'username' || sort_by === 'full_name' || sort_by === 'email' || sort_by === 'created_at') {
-      query = query.order(sort_by, { ascending: sort_order === 'asc' });
-    } else {
-      // Default to created_at if invalid sort field
-      query = query.order('created_at', { ascending: sort_order === 'asc' });
-    }
-
-    // Apply search filter
     if (search) {
-      query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,username.ilike.%${search}%`);
+      const { data: searchUsers, error: searchError } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .or(`full_name.ilike.%${search}%,email.ilike.%${search}%,username.ilike.%${search}%`);
+      
+      if (searchError) throw searchError;
+
+      if (searchUsers && searchUsers.length > 0) {
+        const userIds = searchUsers.map(user => user.id);
+        query = query.in('user_id', userIds);
+      } else {
+        return res.status(200).json({
+          status: 'success',
+          message: 'Eligible users retrieved successfully',
+          data: {
+            users: [],
+            threshold,
+            pagination: {
+              current_page: parseInt(page),
+              total_pages: 0,
+              total_users: 0,
+              has_next: false,
+              has_prev: page > 1,
+              limit: parseInt(limit)
+            }
+          }
+        });
+      }
     }
 
-    const { data: users, error } = await query;
+    const { data: eligibleUsers, error } = await query;
     if (error) throw error;
 
-    // Get total count for users table query
     let countQuery = supabaseAdmin
-      .from('users')
-      .select('*, wallets!inner(voxcoin_balance)', { count: 'exact', head: true })
-      .gte('wallets.voxcoin_balance', threshold);
+      .from('wallets')
+      .select('user_id', { count: 'exact', head: true })
+      .gte('coins_balance', threshold);
 
-    // Apply same search filter to count
     if (search) {
-      countQuery = countQuery.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,username.ilike.%${search}%`);
+      const { data: searchUsers } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .or(`full_name.ilike.%${search}%,email.ilike.%${search}%,username.ilike.%${search}%`);
+      
+      if (searchUsers && searchUsers.length > 0) {
+        const userIds = searchUsers.map(user => user.id);
+        countQuery = countQuery.in('user_id', userIds);
+      }
     }
 
-    const { count: totalCount, error: countError } = await countQuery;
-    if (countError) throw countError;
+    const { count: totalCount } = await countQuery;
 
     res.status(200).json({
       status: 'success',
-      message: 'VOXcoin eligible users retrieved successfully',
+      message: 'Eligible users retrieved successfully',
       data: {
-        users,
+        users: eligibleUsers,
         threshold,
         pagination: {
           current_page: parseInt(page),
@@ -1645,17 +1285,13 @@ const getVoxcoinEligibleUsers = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Get VOXcoin eligible users error:', error);
+    console.error('Get eligible users error:', error);
     res.status(500).json({
       status: 'error',
       message: 'Internal server error'
     });
   }
 };
-
- 
-
- 
 
 // ==================== PLATFORM SETTINGS ====================
 
@@ -1686,7 +1322,6 @@ const getSettings = async (req, res) => {
 const updateSetting = async (req, res) => {
   try {
     const { setting_key, setting_value } = req.body;
- 
 
     const { data: updatedSetting, error } = await supabaseAdmin
       .from('platform_settings')
@@ -1701,7 +1336,6 @@ const updateSetting = async (req, res) => {
 
     if (error) throw error;
 
-    // Log admin activity
     await supabaseAdmin
       .from('admin_activities')
       .insert({
@@ -1726,185 +1360,149 @@ const updateSetting = async (req, res) => {
   }
 };
 
-
 const getDashboardStats = async (req, res) => {
   try {
-    // Get basic user stats
-    const { data: userStats } = await supabaseAdmin
+    // 1. User Stats
+    const { data: users, error: userError } = await supabaseAdmin
       .from('users')
-      .select('user_tier, account_status, role')
-      .not('role', 'eq', 'admin');
+      .select('user_tier, role')
+      .neq('role', 'admin');
 
-    // Get transaction stats (last 30 days)
-    const { data: transactionStats } = await supabaseAdmin
-      .from('transactions')
-      .select('transaction_type, status, amount')
-      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+    if (userError) throw userError;
 
-    // Get pending withdrawals
-    const { data: pendingWithdrawals } = await supabaseAdmin
-      .from('transactions')
-      .select('amount')
-      .eq('transaction_type', 'withdrawal')
-      .eq('status', 'pending');
+    const totalUsers = users.length;
+    const proUsersCount = users.filter(u => u.user_tier === 'Pro').length;
+    const freeUsersCount = totalUsers - proUsersCount;
 
-    // Get package prices from settings
-    const { data: packagePrices } = await supabaseAdmin
+    // 2. Platform Settings (for Pro Price)
+    const { data: settings } = await supabaseAdmin
       .from('platform_settings')
       .select('setting_key, setting_value')
-      .in('setting_key', ['package_price_amateur', 'package_price_pro', 'upcoming_payout_date']);
+      .eq('setting_key', 'package_price_pro')
+      .single();
 
-    const amateurPrice = parseFloat(packagePrices?.find(p => p.setting_key === 'package_price_amateur')?.setting_value || 9500);
-    const proPrice = parseFloat(packagePrices?.find(p => p.setting_key === 'package_price_pro')?.setting_value || 15000);
+    const proPrice = parseFloat(settings?.setting_value || 15000);
 
-       const upcomingPayoutDate = packagePrices?.find(p => p.setting_key === 'upcoming_payout_date')?.setting_value
-      
- 
+    // 3. Game Stats (Revenue from Losses)
+    // Coinflip
+    const { data: coinflipRounds } = await supabaseAdmin
+      .from('coinflip_rounds')
+      .select('stake_amount, payout_amount');
 
-    // Get total package codes generated and used
-    const { data: amateurCodes } = await supabaseAdmin
-      .from('package_codes')
-      .select('is_used')
-      .eq('package_type', 'Amateur');
+    const coinflipWagered = coinflipRounds?.reduce((sum, r) => sum + parseFloat(r.stake_amount), 0) || 0;
+    const coinflipPaidOut = coinflipRounds?.reduce((sum, r) => sum + parseFloat(r.payout_amount), 0) || 0;
+    const coinflipRevenue = coinflipWagered - coinflipPaidOut;
 
-    const { data: proCodes } = await supabaseAdmin
-      .from('package_codes')
-      .select('is_used')
-      .eq('package_type', 'Pro');
+    // Mines
+    const { data: minesRounds } = await supabaseAdmin
+      .from('mines_rounds')
+      .select('stake_amount, payout_amount');
 
-    const amateurUsedCount = amateurCodes?.filter(c => c.is_used).length || 0;
-    const proUsedCount = proCodes?.filter(c => c.is_used).length || 0;
+    const minesWagered = minesRounds?.reduce((sum, r) => sum + parseFloat(r.stake_amount), 0) || 0;
+    const minesPaidOut = minesRounds?.reduce((sum, r) => sum + parseFloat(r.payout_amount), 0) || 0;
+    const minesRevenue = minesWagered - minesPaidOut;
 
-    // Calculate revenue generated
-    const revenueGenerated = (amateurUsedCount * amateurPrice) + (proUsedCount * proPrice);
+    const totalGameRevenue = coinflipRevenue + minesRevenue;
 
-    // Get total codes generated
-    const totalCodesGenerated = (amateurCodes?.length || 0) + (proCodes?.length || 0);
+    // 4. Revenue Calculation
+    const proRevenue = proUsersCount * proPrice;
+    const totalRevenue = proRevenue + totalGameRevenue;
 
-    // Get VoxSkit uploaded count
-    const { count: voxskitCount } = await supabaseAdmin
-      .from('voxskit_videos')
-      .select('*', { count: 'exact', head: true });
+    // 5. Payables
+    // Investments (Money not yet paid out)
+    const { data: activeInvestments } = await supabaseAdmin
+      .from('investments')
+      .select('total_return, total_paid_out')
+      .eq('status', 'active');
 
-    // Get most recent registered users (last 10)
+    const investmentPayables = activeInvestments?.reduce((sum, inv) => {
+      const remaining = parseFloat(inv.total_return) - parseFloat(inv.total_paid_out);
+      return sum + (remaining > 0 ? remaining : 0);
+    }, 0) || 0;
+
+    // Referral Balance (Due to be withdrawn)
+    const { data: wallets } = await supabaseAdmin
+      .from('wallets')
+      .select('referral_balance');
+
+    const referralPayables = wallets?.reduce((sum, w) => sum + parseFloat(w.referral_balance || 0), 0) || 0;
+
+    const totalPayables = investmentPayables + referralPayables;
+
+    // 6. Recent Users
     const { data: recentUsers } = await supabaseAdmin
       .from('users')
-      .select(`
-        *
-      `)
-      // .not('role', 'eq', 'admin')
+      .select('*')
       .order('created_at', { ascending: false })
       .limit(10);
 
- 
-
-    // Get balance growth (total withdrawable balance across all users)
-    const { data: wallets } = await supabaseAdmin
-      .from('wallets')
-      .select('withdrawable_balance, voxcoin_balance');
-
-    const totalWithdrawableBalance = wallets?.reduce((sum, w) => sum + parseFloat(w.withdrawable_balance || 0), 0) || 0;
-    const totalVoxcoinBalance = wallets?.reduce((sum, w) => sum + parseFloat(w.voxcoin_balance || 0), 0) || 0;
-
-    // Calculate stats
-    const stats = {
-      users: {
-        total: userStats?.length || 0,
-        by_tier: {
-          Amateur: userStats?.filter(u => u.user_tier === 'Amateur').length || 0,
-          Pro: userStats?.filter(u => u.user_tier === 'Pro').length || 0
-        },
-        by_role: {
-          user: userStats?.filter(u => u.role === 'user').length || 0,
-          merchant: userStats?.filter(u => u.role === 'merchant').length || 0,
-          manager: userStats?.filter(u => u.role === 'manager').length || 0
-        },
-        active: userStats?.filter(u => u.account_status === 'active').length || 0,
-        suspended: userStats?.filter(u => u.account_status === 'suspended').length || 0
-      },
-      revenue: {
-        total_generated: revenueGenerated,
-        amateur_revenue: amateurUsedCount * amateurPrice,
-        pro_revenue: proUsedCount * proPrice,
-        amateur_codes_used: amateurUsedCount,
-        pro_codes_used: proUsedCount
-      },
-      codes: {
-        total_generated: totalCodesGenerated,
-        amateur_codes: amateurCodes?.length || 0,
-        pro_codes: proCodes?.length || 0,
-        total_used: amateurUsedCount + proUsedCount,
-        total_unused: totalCodesGenerated - (amateurUsedCount + proUsedCount)
-      },
-      voxskit: {
-        total_videos_uploaded: voxskitCount || 0
-      },
-      balance_growth: {
-        total_withdrawable_balance: totalWithdrawableBalance,
-        total_voxcoin_balance: totalVoxcoinBalance,
-        combined_balance: totalWithdrawableBalance + totalVoxcoinBalance
-      },
-      transactions: {
-        total_30_days: transactionStats?.length || 0,
-        by_type: {
-          withdrawal: transactionStats?.filter(t => t.transaction_type === 'withdrawal').length || 0,
-          deposit: transactionStats?.filter(t => t.transaction_type === 'deposit').length || 0,
-          reward: transactionStats?.filter(t => t.transaction_type === 'reward').length || 0,
-          transfer: transactionStats?.filter(t => t.transaction_type === 'transfer').length || 0
-        }
-      },
-      withdrawals: {
-        pending_count: pendingWithdrawals?.length || 0,
-        pending_amount: pendingWithdrawals?.reduce((sum, w) => sum + parseFloat(w.amount), 0) || 0
-      },
-      recent_users: recentUsers,
-        platform_info: {
-        upcoming_payout_date: upcomingPayoutDate
-      }
-    };
-
-    res.status(200).json({
+    return res.status(200).json({
       status: 'success',
       message: 'Dashboard stats retrieved successfully',
-      data: { stats }
+      data: {
+        users: {
+          total: totalUsers,
+          pro: proUsersCount,
+          free: freeUsersCount
+        },
+        revenue: {
+          total: totalRevenue,
+          breakdown: {
+            pro_subscriptions: proRevenue,
+            games_revenue: totalGameRevenue,
+            coinflip_revenue: coinflipRevenue,
+            mines_revenue: minesRevenue
+          }
+        },
+        payables: {
+          total: totalPayables,
+          breakdown: {
+            investments_pending: investmentPayables,
+            referrals_due: referralPayables
+          }
+        },
+        recent_users: recentUsers
+      }
     });
 
   } catch (error) {
-    console.error('Get dashboard stats error:', error);
-    res.status(500).json({
+    console.error('Error in getDashboardStats:', error);
+    return res.status(500).json({
       status: 'error',
       message: 'Internal server error'
     });
   }
 };
 
-
-
 const getTopEarners = async (req, res) => {
   try {
-    
     const { data: topEarners, error } = await supabaseAdmin
       .from('wallets')
       .select(`
-        withdrawable_balance,
-        total_accumulated_earnings,
+        referral_balance,
+        coins_balance,
+        games_balance,
+        investment_balance,
         users!inner (
           username,
           user_tier
         )
       `)
-      .order('total_accumulated_earnings', { ascending: false })
+      .order('referral_balance', { ascending: false })
       .limit(10);
 
     if (error) throw error;
 
-    // Format response
     const formattedEarners = topEarners?.map((entry, index) => ({
       rank: index + 1,
       username: entry.users.username,
       user_tier: entry.users.user_tier,
-      current_balance: parseFloat(entry.withdrawable_balance),
-      total_accumulated_earnings: parseFloat(entry.total_accumulated_earnings)
+      referral_balance: parseFloat(entry.referral_balance),
+      other_balances: {
+        coins: parseFloat(entry.coins_balance),
+        games: parseFloat(entry.games_balance),
+        investment: parseFloat(entry.investment_balance)
+      }
     })) || [];
 
     res.status(200).json({
@@ -1924,31 +1522,22 @@ const getTopEarners = async (req, res) => {
   }
 };
 
- 
-
 module.exports = {
-  // User Management
   getAllUsers,
   getUserDetails,
-  updateUserStatus,getUserEarningsAdmin,
+  updateUserStatus,
+  getUserEarningsAdmin,
   
-  // Withdrawal Management
   getPendingWithdrawals,
   processWithdrawal,
   bulkProcessWithdrawals,
   getWithdrawalStatistics,
 
-  
-  // VOXcoin Management
   getVoxcoinEligibleUsers,
   
-  // Settings Management
   getSettings,
   updateSetting,
   
-  // Dashboard
   getDashboardStats,
-
-   // Public Leaderboards
   getTopEarners,
 };

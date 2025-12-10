@@ -34,11 +34,7 @@ const publicLimiter = rateLimit({
  */
 router.get('/leaderboard/top-earners', publicLimiter, adminController.getTopEarners);
 
-/**
- * GET /api/admin/leaderboard/top-voxskit-watchers
- * Get top 10 VoxSkit video watchers (PUBLIC)
- */
-router.get('/leaderboard/top-voxskit-watchers', publicLimiter, adminController.getTopVoxskitWatchers);
+ 
 
 // Apply middleware to all routes
 router.use(adminLimiter);

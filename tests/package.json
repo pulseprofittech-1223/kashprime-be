@@ -1,0 +1,26 @@
+{
+  "name": "kashprime-backend-tests",
+  "version": "1.0.0",
+  "description": "Integration tests for KashPrime backend",
+  "scripts": {
+    "test": "jest --runInBand --detectOpenHandles",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:admin": "jest tests/integration/admin.routes.test.js"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "coveragePathIgnorePatterns": [
+      "/node_modules/"
+    ],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "verbose": true,
+    "testTimeout": 30000
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3"
+  }
+}

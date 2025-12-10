@@ -10,7 +10,7 @@ const investmentsRoutes = require("./routes/investment.routes");
 // const socialRoutes = require("./routes/social.routes");
 // const voxfeedRoutes = require("./routes/voxfeed.routes");
 // const jobsRoutes = require("./routes/jobs.routes");
-// const adminRoutes = require("./routes/admin.routes");
+const adminRoutes = require("./routes/admin.routes");
 const withdrawalRoutes = require("./routes/withdrawal.routes");
 // const liveButtonRoutes = require("./routes/liveButton.routes");
 // const transferRoutes = require("./routes/transfer.routes");
@@ -22,6 +22,7 @@ const coinflipRoutes = require("./routes/coinflip.routes");
 const gamesRoutes = require("./routes/gaming.routes");
 const paymentRoutes = require("./routes/payments.routes");
 const sponsoredPostRoutes = require("./routes/sponsored.posts.routes");
+const kashAdsRoutes = require("./routes/kashAdsRoutes");
 
 const app = express();
 
@@ -34,9 +35,10 @@ app.use(
     origin: [
       "http://localhost:5173",
       "http://localhost:5175",
+      "http://localhost:5176",
       "http://localhost:5174",
       "http://localhost:3000",
-      "https://kashprime.netlify.app","http://127.0.0.1:5500",
+      "https://kashprime.netlify.app","https://kashprime.com",
       process.env.FRONTEND_URL,
       process.env.FRONTEND_URL2,
       process.env.FRONTEND_URL3,
@@ -83,7 +85,7 @@ app.use("/api/investments", investmentsRoutes);
 // app.use("/api/social", socialRoutes);
 // app.use("/api/voxfeed", voxfeedRoutes);
 // app.use("/api/jobs", jobsRoutes);
-// app.use("/api/admin", adminRoutes);
+app.use("/api/admin", adminRoutes);
 app.use("/api/withdrawal", withdrawalRoutes);
 // app.use("/api/live-button", liveButtonRoutes);
 // app.use("/api/transfer", transferRoutes);
@@ -95,6 +97,7 @@ app.use("/api/coinflip", coinflipRoutes);
 app.use("/api/games", gamesRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/sponsored-posts', sponsoredPostRoutes);
+app.use('/api/kash-ads', kashAdsRoutes);
 
 // 404 handler - Express v5 compatible
 app.use((req, res, next) => {
