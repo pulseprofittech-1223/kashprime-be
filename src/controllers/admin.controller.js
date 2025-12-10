@@ -1429,7 +1429,16 @@ const getDashboardStats = async (req, res) => {
 
     const totalPayables = investmentPayables + referralPayables;
 
-    // 6. Recent Users
+    // 6. Kash Ads Stats
+    const { data: kashAdsData } = await supabaseAdmin
+      .from('kash_ads')
+      .select('total_coins_earned, total_rewards_claimed');
+
+    const kashAdsTotalEarned = kashAdsData?.reduce((sum, r) => sum + parseFloat(r.total_coins_earned || 0), 0) || 0;
+    const kashAdsTotalClaims = kashAdsData?.reduce((sum, r) => sum + parseInt(r.total_rewards_claimed || 0), 0) || 0;
+    const kashAdsParticipatingUsers = kashAdsData?.length || 0;
+
+    // 7. Recent Users
     const { data: recentUsers } = await supabaseAdmin
       .from('users')
       .select('*')
@@ -1444,6 +1453,11 @@ const getDashboardStats = async (req, res) => {
           total: totalUsers,
           pro: proUsersCount,
           free: freeUsersCount
+        },
+        kash_ads: {
+          total_earned: kashAdsTotalEarned,
+          total_claims: kashAdsTotalClaims,
+          users_count: kashAdsParticipatingUsers
         },
         revenue: {
           total: totalRevenue,
