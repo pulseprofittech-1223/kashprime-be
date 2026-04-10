@@ -21,5 +21,6 @@ userRouter.get('/transactions', validateTransactionQuery, userController.getTran
 userRouter.get('/wallet', userController.getWalletDetails);
 userRouter.put('/wallet/update', userController.updateWallet);
 userRouter.get('/activity', validateActivityQuery, userController.getActivitySummary);
+userRouter.post('/merchant/apply', userController.applyForMerchant);
 
 module.exports = userRouter;   

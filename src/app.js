@@ -23,31 +23,52 @@ const gamesRoutes = require("./routes/gaming.routes");
 const paymentRoutes = require("./routes/payments.routes");
 const sponsoredPostRoutes = require("./routes/sponsored.posts.routes");
 const kashAdsRoutes = require("./routes/kashAdsRoutes");
-
+const hub88Routes = require("./routes/hub88.routes");
+const spinWheelRoutes = require('./routes/spinWheel.routes');
+const diceRollRoutes  = require('./routes/diceRoll.routes');
+const plinkoRoutes    = require('./routes/plinko.routes');
+const colorPickRoutes = require('./routes/colorPick.routes');
+const higherLowerRoutes = require('./routes/higherLower.routes');
+const towerClimbRoutes = require('./routes/towerClimb.routes');
+const scratchCardRoutes = require('./routes/scratchCard.routes');
+const kenoRoutes = require('./routes/keno.routes');
+  
 const app = express();
-
-// Security middleware
-app.use(helmet());
 
 // CORS configuration
 app.use(
   cors({
     origin: [
       "http://localhost:5173",
+      "http://localhost:5174",
       "http://localhost:5175",
       "http://localhost:5176",
-      "http://localhost:5174",
       "http://localhost:3000",
-      "https://kashprime.netlify.app","https://kashprime.com",
+      "https://kashprime.netlify.app",
+      "https://kashprime.com",
+      "https://www.kashprime.com",
       process.env.FRONTEND_URL,
       process.env.FRONTEND_URL2,
       process.env.FRONTEND_URL3,
     ].filter(Boolean),
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "Accept",
+      "Origin",
+    ],
+    optionsSuccessStatus: 200, // Some legacy browsers (IE11, various SmartTVs) choke on 204
   })
-);
+);  
+        
+// Security middleware
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: false, // Disable CSP for local dev if needed, or configure it properly
+}));  
 
 // // Rate limiting
 // const limiter = rateLimit({
@@ -86,6 +107,15 @@ app.use("/api/investments", investmentsRoutes);
 // app.use("/api/voxfeed", voxfeedRoutes);
 // app.use("/api/jobs", jobsRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/hub88", hub88Routes);
+app.use('/api/spin-wheel', spinWheelRoutes);
+app.use('/api/dice-roll',  diceRollRoutes);
+app.use('/api/plinko',     plinkoRoutes);
+app.use('/api/color-pick',  colorPickRoutes);
+app.use('/api/higher-lower', higherLowerRoutes);
+app.use('/api/tower-climb',  towerClimbRoutes);
+app.use('/api/scratch-card', scratchCardRoutes);
+app.use('/api/keno',         kenoRoutes);
 app.use("/api/withdrawal", withdrawalRoutes);
 // app.use("/api/live-button", liveButtonRoutes);
 // app.use("/api/transfer", transferRoutes);

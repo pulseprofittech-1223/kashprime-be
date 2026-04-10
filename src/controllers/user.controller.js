@@ -560,11 +560,85 @@ const getActivitySummary = async (req, res) => {
   }
 };
 
+const applyForMerchant = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Check if they already have an application
+    const { data: existingApp } = await supabaseAdmin
+      .from('merchant_applications')
+      .select('status')
+      .eq('user_id', userId)
+      .single();
+
+    if (existingApp) {
+      return res.status(400).json(
+        formatResponse('error', `You already have an application with status: ${existingApp.status}`)
+      );
+    }
+
+    // Checking criteria based on platform settings
+    const limitsKeys = ['merchant_min_referrals', 'merchant_min_referral_deposit'];
+    const { data: limits } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_key, setting_value')
+      .in('setting_key', limitsKeys);
+
+    let minRefsNeeded = 10;
+    let minRefDeposit = 5000;
+    limits?.forEach(l => {
+      if(l.setting_key === 'merchant_min_referrals') minRefsNeeded = parseInt(l.setting_value);
+      if(l.setting_key === 'merchant_min_referral_deposit') minRefDeposit = parseFloat(l.setting_value);
+    });
+
+    const { data: directReferrals } = await supabaseAdmin
+       .from('users')
+       .select('id')
+       .eq('referred_by', userId);
+
+    let validCount = 0;
+    if (directReferrals && directReferrals.length > 0) {
+       for (const refUser of directReferrals) {
+          const { data: deposits } = await supabaseAdmin
+             .from('transactions')
+             .select('amount')
+             .eq('user_id', refUser.id)
+             .eq('transaction_type', 'deposit')
+             .eq('status', 'completed');
+          const totalDeposit = deposits?.reduce((summ, tx) => summ + parseFloat(tx.amount), 0) || 0;
+          if (totalDeposit >= minRefDeposit) {
+             validCount++;
+          }
+       }
+    }
+
+    if (validCount < minRefsNeeded) {
+       return res.status(403).json(
+         formatResponse('error', `You do not meet the criteria. Valid referrals: ${validCount}/${minRefsNeeded}`)
+       );
+    }
+
+    // Create application
+    await supabaseAdmin
+      .from('merchant_applications')
+      .insert({ user_id: userId, status: 'pending' });
+
+    res.status(200).json(
+      formatResponse('success', 'Merchant application submitted successfully and is pending admin approval.')
+    );
+
+  } catch (error) {
+    console.error('Merchant application error:', error);
+    res.status(500).json(formatResponse('error', 'Internal server error'));
+  }
+};
+
 module.exports = {
   getDashboard,
   updateProfile,
   getTransactions,
   getWalletDetails,
   updateWallet,
-  getActivitySummary
+  getActivitySummary,
+  applyForMerchant
 };

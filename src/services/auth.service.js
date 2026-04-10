@@ -62,7 +62,8 @@ const registerUser = async (userData) => {
     // Hash password for authentication AND encrypt original for admin viewing
     const hashedPassword = await hashPassword(password);
     const encryptedOriginalPassword = encryptPassword(password);
-    const userReferralCode = await generateReferralCode(username);
+    // Let the username be the unique referral code
+    const userReferralCode = username.toLowerCase();
 
     // Create user with BOTH hashed and encrypted passwords
     const { data: newUser, error: userError } = await supabaseAdmin

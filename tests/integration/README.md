@@ -30,7 +30,7 @@ Create a `.env.test` file in your project root:
 NODE_ENV=test
 DATABASE_URL=your_test_database_url
 JWT_SECRET=your_test_jwt_secret
-PORT=5001
+PORT=8080
 ```
 
 ### 3. Run Tests

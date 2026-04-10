@@ -364,6 +364,9 @@ class PaymentController {
         created_at: new Date().toISOString()
       });
 
+    // Fire-and-forget referral commission
+    PaymentController.processReferralCommission(userId, paidAmount, reference);
+
     return {
       new_games_balance: newBalance,
       wallet_type: 'gaming'
@@ -478,6 +481,9 @@ class PaymentController {
         },
         created_at: new Date().toISOString()
       });
+
+    // Fire-and-forget referral commission
+    PaymentController.processReferralCommission(userId, capitalAmount, reference);
 
     return {
       investment: {
@@ -599,144 +605,8 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
       created_at: new Date().toISOString()
     });
 
-  // ========== PROCESS REFERRAL REWARD (FIXED) ==========
-  if (user.referred_by) {
-    try {
-      // First, check if referral record exists
-      const { data: existingReferral, error: referralCheckError } = await supabaseAdmin
-        .from('referrals')
-        .select('id, status, reward_amount, referrer_id, referred_id')
-        .eq('referred_id', userId)
-        .eq('referrer_id', user.referred_by)
-        .single();
-
-      if (referralCheckError) {
-        console.error('Referral check error:', referralCheckError);
-        throw new Error(`Referral record not found for user ${userId}`);
-      }
-
-      if (!existingReferral) {
-        console.error('No referral record found:', {
-          referred_id: userId,
-          referrer_id: user.referred_by
-        });
-        throw new Error('Referral record does not exist');
-      }
-
-      // Check if reward has already been paid
-      const currentRewardAmount = parseFloat(existingReferral.reward_amount || 0);
-      if (currentRewardAmount > 0) {
-        console.log('Referral reward already paid:', {
-          referral_id: existingReferral.id,
-          reward_amount: currentRewardAmount
-        });
-        responseData.referral_reward_status = 'already_paid';
-        responseData.referral_reward_amount = currentRewardAmount;
-        return responseData;
-      }
-
-      // Update referral record with reward amount and ensure status is active
-      const { data: updatedReferral, error: updateError } = await supabaseAdmin
-        .from('referrals')
-        .update({
-          status: 'active',
-          reward_amount: referralRewardAmount,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', existingReferral.id)
-        .select()
-        .single();
-
-      if (updateError) {
-        console.error('Referral update error:', updateError);
-        throw new Error('Failed to update referral record');
-      }
-
-      console.log('Referral record updated:', {
-        referral_id: updatedReferral.id,
-        reward_amount: referralRewardAmount,
-        status: updatedReferral.status
-      });
-
-      // Get referrer's current wallet balance
-      const { data: referrerWallet, error: walletError } = await supabaseAdmin
-        .from('wallets')
-        .select('referral_balance')
-        .eq('user_id', user.referred_by)
-        .single();
-
-      if (walletError) {
-        console.error('Referrer wallet fetch error:', walletError);
-        throw new Error('Failed to fetch referrer wallet');
-      }
-
-      const newReferralBalance = parseFloat(referrerWallet.referral_balance || 0) + referralRewardAmount;
-
-      // Credit referrer's referral_balance
-      const { error: walletUpdateError } = await supabaseAdmin
-        .from('wallets')
-        .update({
-          referral_balance: newReferralBalance,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', user.referred_by);
-
-      if (walletUpdateError) {
-        console.error('Referrer wallet update error:', walletUpdateError);
-        throw new Error('Failed to credit referrer wallet');
-      }
-
-      console.log('Referrer wallet credited:', {
-        referrer_id: user.referred_by,
-        old_balance: referrerWallet.referral_balance,
-        new_balance: newReferralBalance,
-        reward_amount: referralRewardAmount
-      });
-
-      // Record referral reward transaction for referrer
-      const { error: transactionError } = await supabaseAdmin
-        .from('transactions')
-        .insert({
-          user_id: user.referred_by,
-          transaction_type: 'reward',
-          balance_type: 'referral_balance',
-          amount: referralRewardAmount,
-          currency: 'NGN',
-          status: 'completed',
-          description: `Referral reward - ${user.username || user.full_name || 'User'} upgraded to Pro`,
-          source_user_id: userId,
-          metadata: {
-            referred_user_id: userId,
-            referred_username: user.username,
-            upgrade_reference: reference,
-            referral_id: updatedReferral.id
-          },
-          created_at: new Date().toISOString()
-        });
-
-      if (transactionError) {
-        console.error('Referral transaction error:', transactionError);
-        throw new Error('Failed to record referral reward transaction');
-      }
-
-      console.log('Referral reward transaction recorded successfully');
-
-      responseData.referral_reward_processed = true;
-      responseData.referral_reward_amount = referralRewardAmount;
-      responseData.referrer_id = user.referred_by;
-      responseData.new_referrer_balance = newReferralBalance;
-
-    } catch (referralError) {
-      console.error('Referral reward processing error:', referralError);
-      // Don't throw - allow upgrade to complete even if referral reward fails
-      responseData.referral_reward_error = referralError.message;
-      responseData.referral_reward_processed = false;
-    }
-  }
-
   return responseData;
 }
-
   // Get transaction history
   static async getTransactionHistory(req, res) {
     try {
@@ -985,6 +855,117 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
         success: false,
         message: 'Webhook processing failed'
       });
+    }
+  }
+
+  // Handle dynamic referral commission for deposits
+  static async processReferralCommission(userId, depositAmount, transactionReference) {
+    try {
+      const { data: user } = await supabaseAdmin
+        .from('users')
+        .select('id, username, referred_by')
+        .eq('id', userId)
+        .single();
+
+      if (!user || !user.referred_by) return;
+
+      // Count user's successful deposits to determine if it's the first one
+      const { count, error: countError } = await supabaseAdmin
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('transaction_type', 'deposit')
+        .eq('status', 'completed');
+
+      if (countError) {
+        console.error('Error counting deposits', countError);
+        return;
+      }
+
+      // Since the current deposit is already inserted, if count <= 1 it's the first deposit.
+      const isFirstDeposit = count <= 1;
+
+      // Fetch percentages from settings
+      const { data: settings } = await supabaseAdmin
+        .from('platform_settings')
+        .select('setting_key, setting_value')
+        .in('setting_key', ['referral_first_deposit_percent', 'referral_subsequent_deposit_percent']);
+
+      let firstDepositPercent = 35;
+      let subsequentDepositPercent = 15;
+
+      settings?.forEach(s => {
+        if (s.setting_key === 'referral_first_deposit_percent') firstDepositPercent = parseFloat(s.setting_value);
+        if (s.setting_key === 'referral_subsequent_deposit_percent') subsequentDepositPercent = parseFloat(s.setting_value);
+      });
+
+      const percent = isFirstDeposit ? firstDepositPercent : subsequentDepositPercent;
+      const commissionAmount = depositAmount * (percent / 100);
+
+      if (commissionAmount <= 0) return;
+
+      // Step 1: Update referrals table (cumulative reward)
+      const { data: existingReferral } = await supabaseAdmin
+        .from('referrals')
+        .select('id, reward_amount')
+        .eq('referred_id', userId)
+        .eq('referrer_id', user.referred_by)
+        .single();
+
+      if (existingReferral) {
+        const currentReward = parseFloat(existingReferral.reward_amount || 0);
+        await supabaseAdmin
+          .from('referrals')
+          .update({
+            status: 'active',
+            reward_amount: currentReward + commissionAmount,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingReferral.id);
+      }
+
+      // Step 2: Credit referrer wallet
+      const { data: referrerWallet } = await supabaseAdmin
+        .from('wallets')
+        .select('referral_balance')
+        .eq('user_id', user.referred_by)
+        .single();
+
+      if (referrerWallet) {
+        await supabaseAdmin
+          .from('wallets')
+          .update({
+            referral_balance: parseFloat(referrerWallet.referral_balance || 0) + commissionAmount,
+            updated_at: new Date().toISOString()
+          })
+          .eq('user_id', user.referred_by);
+      }
+
+      // Step 3: Insert transaction for referrer
+      await supabaseAdmin
+        .from('transactions')
+        .insert({
+          user_id: user.referred_by,
+          transaction_type: 'reward',
+          balance_type: 'referral_balance',
+          amount: commissionAmount,
+          currency: 'NGN',
+          status: 'completed',
+          description: `Referral commission - ${percent}% from ${user.username}'s deposit`,
+          source_user_id: userId,
+          metadata: {
+            referred_user_id: userId,
+            deposit_reference: transactionReference,
+            commission_percent: percent,
+            is_first_deposit: isFirstDeposit
+          },
+          created_at: new Date().toISOString()
+        });
+
+      console.log(`Referral commission of ${commissionAmount} paid to ${user.referred_by}`);
+
+    } catch (error) {
+      console.error('Error processing referral commission:', error);
     }
   }
 }

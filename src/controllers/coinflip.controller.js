@@ -300,7 +300,7 @@ const playGame = async (req, res) => {
             status: round.status,
             created_at: round.created_at
           },
-          new_games_balance_balance: formatCurrency(newBalance)
+          new_games_balance: Number(newBalance)
         }
       });
     } else {
@@ -320,7 +320,7 @@ const playGame = async (req, res) => {
             status: round.status,
             created_at: round.created_at
           },
-          new_games_balance_balance: formatCurrency(newBalance)
+          new_games_balance: Number(newBalance)
         }
       });
     }

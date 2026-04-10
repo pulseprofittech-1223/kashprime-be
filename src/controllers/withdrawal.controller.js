@@ -28,7 +28,7 @@ const createWithdrawalRequest = async (req, res) => {
     // Get user information to determine tier
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
-      .select('user_tier')
+      .select('user_tier, role')
       .eq('id', userId)
       .single();
     if (userError || !user) {
@@ -55,6 +55,8 @@ const createWithdrawalRequest = async (req, res) => {
     limits?.forEach(l => {
       limitsMap[l.setting_key] = parseFloat(l.setting_value);
     });
+    const maxAmount = limitsMap['max_withdrawal_amount'] || 500000;
+
     // Determine minimum withdrawal based on balance type and user tier
     let minAmount;
     if (balance_type === 'coins_balance') {
@@ -64,11 +66,50 @@ const createWithdrawalRequest = async (req, res) => {
     } else if (balance_type === 'games_balance') {
       minAmount = limitsMap['min_withdrawal_games'] || 1000;
     } else if (balance_type === 'referral_balance') {
+      // MERCHANTS ONLY CHECK FOR REFERRAL WITHDRAWAL
+      if (user.role !== 'merchant') {
+        const minRefsNeeded = limitsMap['merchant_min_referrals'] || 10;
+        const minRefDeposit = limitsMap['merchant_min_referral_deposit'] || 5000;
+
+        // Check if user has met criteria
+        const { data: directReferrals } = await supabaseAdmin
+           .from('users')
+           .select('id')
+           .eq('referred_by', userId);
+
+        let validCount = 0;
+        if (directReferrals && directReferrals.length > 0) {
+           for (const refUser of directReferrals) {
+              const { data: deposits } = await supabaseAdmin
+                 .from('transactions')
+                 .select('amount')
+                 .eq('user_id', refUser.id)
+                 .eq('transaction_type', 'deposit')
+                 .eq('status', 'completed');
+              const totalDeposit = deposits?.reduce((summ, tx) => summ + parseFloat(tx.amount), 0) || 0;
+              if (totalDeposit >= minRefDeposit) {
+                 validCount++;
+              }
+           }
+        }
+
+        if (validCount < minRefsNeeded) {
+           return res.status(403).json({
+             status: 'error',
+             message: `You need at least ${minRefsNeeded} referrals with minimum ₦${minRefDeposit.toLocaleString()} deposits each to withdraw referral earnings. (Current valid: ${validCount}/${minRefsNeeded})`
+           });
+        } else {
+           return res.status(403).json({
+             status: 'error',
+             message: 'You must apply as a Merchant on your Referral page to withdraw referral earnings.'
+           });
+        }
+      }
+
       minAmount = limitsMap['min_withdrawal_referral'] || 2500;
     } else if (balance_type === 'investment_balance') {
       minAmount = limitsMap['min_withdrawal_investment'] || 3500;
     }
-    const maxAmount = limitsMap['max_withdrawal_amount'] || 500000;
     // Validate amount
     if (amount < minAmount || amount > maxAmount) {
       return res.status(400).json({

@@ -34,13 +34,9 @@ const generateBombPositions = (bombCount) => {
  */
 const calculatePayout = (stakeAmount, successfulClicks, bombCount, multiplierConfig) => {
   try {
- 
-
-
-    // Get multipliers for selected bomb count
-    const bombConfig = JSON.parse(multiplierConfig)[bombCount.toString()];
-
-    console.log(bombConfig, 'bombConfig') 
+    // multiplierConfig could be a string if not properly parsed by database driver
+    const config = typeof multiplierConfig === 'string' ? JSON.parse(multiplierConfig) : multiplierConfig;
+    const bombConfig = config[bombCount.toString()];
     
     if (!bombConfig || !bombConfig.multipliers) {
       throw new Error(`Invalid bomb configuration for ${bombCount} bombs`);
@@ -54,9 +50,9 @@ const calculatePayout = (stakeAmount, successfulClicks, bombCount, multiplierCon
     // Get multiplier (0-indexed array)
     const cashoutMultiplier = bombConfig.multipliers[successfulClicks - 1];
     
-    // Calculate payout and profit
-    const payout = parseFloat((stakeAmount * cashoutMultiplier).toFixed(2));
-    const profit = parseFloat((payout - stakeAmount).toFixed(2));
+    // Calculate payout and profit using DECIMAL logic (Fixed 2)
+    const payout = Math.floor(stakeAmount * cashoutMultiplier * 100) / 100;
+    const profit = Math.floor((payout - stakeAmount) * 100) / 100;
     
     return {
       cashoutMultiplier,
@@ -75,7 +71,8 @@ const calculatePayout = (stakeAmount, successfulClicks, bombCount, multiplierCon
  * @returns {boolean}
  */
 const isValidBombCount = (bombCount, allowedOptions = [4, 6, 8, 10]) => {
-  return allowedOptions.includes(bombCount);
+  const options = typeof allowedOptions === 'string' ? JSON.parse(allowedOptions) : allowedOptions;
+  return options.includes(parseInt(bombCount));
 };
 
 /**
@@ -85,7 +82,8 @@ const isValidBombCount = (bombCount, allowedOptions = [4, 6, 8, 10]) => {
  * @returns {number} - Maximum number of safe fields user can click
  */
 const getMaxWinsForBombCount = (bombCount, multiplierConfig) => {
-  const bombConfig = multiplierConfig[bombCount.toString()];
+  const config = typeof multiplierConfig === 'string' ? JSON.parse(multiplierConfig) : multiplierConfig;
+  const bombConfig = config[bombCount.toString()];
   return bombConfig ? bombConfig.levels : 0;
 };
 
@@ -120,18 +118,22 @@ const formatCurrency = (amount) => {
  * @returns {object} - { valid: boolean, error: string }
  */
 const validateStakeAmount = (amount, minStake, userBalance) => {
-  if (!amount || amount <= 0) {
+  const stake = parseFloat(amount);
+  const min = parseFloat(minStake);
+  const balance = parseFloat(userBalance);
+
+  if (isNaN(stake) || stake <= 0) {
     return { valid: false, error: 'Stake amount must be greater than 0' };
   }
   
-  if (amount < minStake) {
-    return { valid: false, error: `Minimum stake is ${formatCurrency(minStake)}` };
+  if (stake < min) {
+    return { valid: false, error: `Minimum stake is ${formatCurrency(min)}` };
   }
   
-  if (amount > userBalance) {
+  if (stake > balance) {
     return { 
       valid: false, 
-      error: `Insufficient balance. You have ${formatCurrency(userBalance)}` 
+      error: `Insufficient balance. You have ${formatCurrency(balance)}` 
     };
   }
   
