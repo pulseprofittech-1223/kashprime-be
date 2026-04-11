@@ -27,11 +27,11 @@ const startGame = async (req, res) => {
     if (!enabled)
       return res.status(403).json({ status: 'error', message: 'Tower Climb is currently disabled' });
 
-    const { data: wallet } = await supabaseAdmin.from('wallets').select('gaming_wallet').eq('user_id', userId).single();
+    const { data: wallet } = await supabaseAdmin.from('wallets').select('games_balance').eq('user_id', userId).single();
     if (!wallet)
       return res.status(400).json({ status: 'error', message: 'Could not retrieve wallet' });
 
-    const balance = parseFloat(wallet.gaming_wallet);
+    const balance = parseFloat(wallet.games_balance);
     const val = validateStake(stakeAmount, minStake, balance);
     if (!val.valid)
       return res.status(400).json({ status: 'error', message: val.error });
@@ -40,13 +40,25 @@ const startGame = async (req, res) => {
     const newBal    = parseFloat((balance - stakeAmount).toFixed(2));
 
     await supabaseAdmin.from('wallets')
-      .update({ gaming_wallet: newBal, updated_at: new Date().toISOString() })
+      .update({ games_balance: newBal, updated_at: new Date().toISOString() })
       .eq('user_id', userId);
 
-    const { data: round } = await supabaseAdmin.from('tower_climb_rounds').insert({
+    const { data: round, error: insertErr } = await supabaseAdmin.from('tower_climb_rounds').insert({
       user_id: userId, stake_amount: stakeAmount, floors, tiles_per_floor: tilesPerFloor,
       floor_data: floorData, current_floor: 0, current_multiplier: base, status: 'active'
     }).select().single();
+
+    if (insertErr || !round) {
+      console.error('towerClimb startGame insert error:', insertErr);
+      // Refund stake if insert failed
+      await supabaseAdmin.from('wallets')
+        .update({ games_balance: balance, updated_at: new Date().toISOString() })
+        .eq('user_id', userId);
+      return res.status(500).json({
+        status: 'error',
+        message: insertErr?.message || 'Failed to create game round. Please try again.'
+      });
+    }
 
     await supabaseAdmin.from('transactions').insert({
       user_id: userId, transaction_type: 'gaming', earning_type: 'tower_climb_stake',
@@ -80,6 +92,7 @@ const startGame = async (req, res) => {
         current_multiplier: base,
         floor_data:        safeFloorData,
         multiplier_preview: multiplierPreview,
+        status:            round.status,
         new_gaming_wallet_balance: newBal
       }
     });
@@ -120,8 +133,8 @@ const revealTile = async (req, res) => {
 
     floorData[currentFloorIndex].revealed_index = tileIdx;
 
-    const { data: wallet } = await supabaseAdmin.from('wallets').select('gaming_wallet').eq('user_id', userId).single();
-    const balance = parseFloat(wallet.gaming_wallet);
+    const { data: wallet } = await supabaseAdmin.from('wallets').select('games_balance').eq('user_id', userId).single();
+    const balance = parseFloat(wallet.games_balance);
 
     if (isSafe) {
       const nextFloor = currentFloorIndex + 1;
@@ -135,7 +148,7 @@ const revealTile = async (req, res) => {
         const newBal = parseFloat((balance + payout).toFixed(2));
 
         await supabaseAdmin.from('wallets')
-          .update({ gaming_wallet: newBal, updated_at: new Date().toISOString() })
+          .update({ games_balance: newBal, updated_at: new Date().toISOString() })
           .eq('user_id', userId);
         await supabaseAdmin.from('tower_climb_rounds').update({
           floor_data: floorData, current_floor: nextFloor, current_multiplier: newMulti,
@@ -152,7 +165,7 @@ const revealTile = async (req, res) => {
         return res.status(200).json({
           status: 'success',
           message: `You reached the TOP! ${newMulti}× 🏆 Won ₦${payout.toLocaleString()}`,
-          data: { result: 'top', tile_result: 'safe', floor_reached: nextFloor, multiplier: newMulti, payout_amount: payout, profit_loss: profit, status: 'cashed_out', revealed_floors: floorData, new_gaming_wallet_balance: newBal }
+          data: { result: 'top', tile_result: 'safe', floor_reached: nextFloor, multiplier: newMulti, payout_amount: payout, profit_loss: profit, status: 'cashed_out', floor_data: floorData, new_gaming_wallet_balance: newBal }
         });
       }
 
@@ -189,7 +202,7 @@ const revealTile = async (req, res) => {
       return res.status(200).json({
         status:  'error',
         message: `TRAP! You fell from floor ${currentFloorIndex + 1}. 💥`,
-        data: { result: 'trap', tile_result: 'trap', floor_fell: currentFloorIndex + 1, trap_index: currentFloor.trap_index, payout_amount: 0, profit_loss: profit, status: 'fell', revealed_floors: floorData, new_gaming_wallet_balance: balance }
+        data: { result: 'trap', tile_result: 'trap', floor_fell: currentFloorIndex + 1, trap_index: currentFloor.trap_index, payout_amount: 0, profit_loss: profit, status: 'fell', floor_data: floorData, new_gaming_wallet_balance: balance }
       });
     }
   } catch (err) {
@@ -210,17 +223,17 @@ const cashOut = async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'Round not found' });
     if (round.status !== 'active')
       return res.status(400).json({ status: 'error', message: 'Game already ended' });
-    if (round.current_floor === 0)
-      return res.status(400).json({ status: 'error', message: 'Must clear at least one floor before cashing out' });
+    if (round.current_floor < 3)
+      return res.status(400).json({ status: 'error', message: 'You must reach at least floor 3 to cash out.' });
 
-    const { data: wallet } = await supabaseAdmin.from('wallets').select('gaming_wallet').eq('user_id', userId).single();
-    const balance = parseFloat(wallet.gaming_wallet);
+    const { data: wallet } = await supabaseAdmin.from('wallets').select('games_balance').eq('user_id', userId).single();
+    const balance = parseFloat(wallet.games_balance);
     const payout  = parseFloat((round.stake_amount * round.current_multiplier).toFixed(2));
     const profit  = parseFloat((payout - round.stake_amount).toFixed(2));
     const newBal  = parseFloat((balance + payout).toFixed(2));
 
     await supabaseAdmin.from('wallets')
-      .update({ gaming_wallet: newBal, updated_at: new Date().toISOString() })
+      .update({ games_balance: newBal, updated_at: new Date().toISOString() })
       .eq('user_id', userId);
     await supabaseAdmin.from('tower_climb_rounds').update({
       cashout_multiplier: round.current_multiplier, payout_amount: payout,
@@ -237,7 +250,7 @@ const cashOut = async (req, res) => {
     return res.status(200).json({
       status:  'success',
       message: `Cashed out at ${round.current_multiplier}×! Won ₦${payout.toLocaleString()} 🎯`,
-      data: { result: 'cashout', cashout_multiplier: round.current_multiplier, floor_reached: round.current_floor, payout_amount: payout, profit_loss: profit, status: 'cashed_out', new_gaming_wallet_balance: newBal }
+      data: { result: 'cashout', cashout_multiplier: round.current_multiplier, floor_reached: round.current_floor, payout_amount: payout, profit_loss: profit, status: 'cashed_out', floor_data: round.floor_data, new_gaming_wallet_balance: newBal }
     });
   } catch (err) {
     console.error('towerClimb cashOut error:', err);

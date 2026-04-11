@@ -47,9 +47,7 @@ app.use(
       "https://kashprime.netlify.app",
       "https://kashprime.com",
       "https://www.kashprime.com",
-      process.env.FRONTEND_URL,
-      process.env.FRONTEND_URL2,
-      process.env.FRONTEND_URL3,
+       
     ].filter(Boolean),
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],

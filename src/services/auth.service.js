@@ -493,6 +493,23 @@ const getUserReferrals = async (userId) => {
     const totalEarnings = directReferrals?.reduce((sum, ref) => 
       sum + parseFloat(ref.reward_amount), 0) || 0;
 
+    // Get total deposits for each referred user
+    const referredIds = directReferrals?.map(ref => ref.referred.id) || [];
+    let userDeposits = {};
+    
+    if (referredIds.length > 0) {
+      const { data: depositsData } = await supabaseAdmin
+        .from('transactions')
+        .select('user_id, amount')
+        .in('user_id', referredIds)
+        .eq('transaction_type', 'deposit')
+        .eq('status', 'completed');
+        
+      depositsData?.forEach(d => {
+        userDeposits[d.user_id] = (userDeposits[d.user_id] || 0) + parseFloat(d.amount);
+      });
+    }
+
     return {
       direct_referrals: directReferrals?.map(ref => ({
         id: ref.referred.id,
@@ -500,7 +517,8 @@ const getUserReferrals = async (userId) => {
         full_name: ref.referred.full_name,
         user_tier: ref.referred.user_tier,
         reward_amount: ref.reward_amount,
-        created_at: ref.created_at
+        created_at: ref.created_at,
+        total_deposits: userDeposits[ref.referred.id] || 0
       })) || [],
       total_referrals: directReferrals?.length || 0,
       total_earnings: totalEarnings

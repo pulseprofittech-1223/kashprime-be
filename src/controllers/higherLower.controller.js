@@ -33,10 +33,18 @@ const startRound = async (req, res) => {
     const multipliers = getBothMultipliers(shownNumber, houseEdge);
     const expiresAt   = new Date(Date.now() + ttl * 1000).toISOString();
 
-    const { data: round } = await supabaseAdmin.from('higher_lower_rounds').insert({
+    const { data: round, error: insertErr } = await supabaseAdmin.from('higher_lower_rounds').insert({
       user_id: userId, shown_number: shownNumber,
       status: 'waiting', win_rate_snapshot: winRate, expires_at: expiresAt
     }).select().single();
+
+    if (insertErr || !round) {
+      console.error('higherLower startRound insert error:', insertErr);
+      return res.status(500).json({
+        status: 'error',
+        message: insertErr?.message || 'Failed to create game round. Please try again.'
+      });
+    }
 
     return res.status(201).json({
       status: 'success',
@@ -81,11 +89,11 @@ const placeBet = async (req, res) => {
     const minStake  = parseFloat(parsePlatformSetting(map.higher_lower_min_stake, '50'));
     const houseEdge = parseFloat(parsePlatformSetting(map.higher_lower_house_edge, '0.05'));
 
-    const { data: wallet } = await supabaseAdmin.from('wallets').select('gaming_wallet').eq('user_id', userId).single();
+    const { data: wallet } = await supabaseAdmin.from('wallets').select('games_balance').eq('user_id', userId).single();
     if (!wallet)
       return res.status(400).json({ status: 'error', message: 'Could not retrieve wallet' });
 
-    const balance = parseFloat(wallet.gaming_wallet);
+    const balance = parseFloat(wallet.games_balance);
     const val = validateStake(stakeAmount, minStake, balance);
     if (!val.valid)
       return res.status(400).json({ status: 'error', message: val.error });
@@ -102,7 +110,7 @@ const placeBet = async (req, res) => {
     const newBal  = parseFloat((balance + profit).toFixed(2));
 
     await supabaseAdmin.from('wallets')
-      .update({ gaming_wallet: newBal, updated_at: new Date().toISOString() })
+      .update({ games_balance: newBal, updated_at: new Date().toISOString() })
       .eq('user_id', userId);
 
     await supabaseAdmin.from('higher_lower_rounds').update({
@@ -130,6 +138,7 @@ const placeBet = async (req, res) => {
         result_number:  resultNumber,
         direction,
         multiplier,
+        stake_amount:   stakeAmount,
         payout_amount:  payout,
         profit_loss:    profit,
         status:         isWin ? 'won' : 'lost',

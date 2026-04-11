@@ -46,11 +46,11 @@ const playGame = async (req, res) => {
     if (!enabled)
       return res.status(403).json({ status: 'error', message: 'Scratch Card is currently disabled' });
 
-    const { data: wallet } = await supabaseAdmin.from('wallets').select('gaming_wallet').eq('user_id', userId).single();
+    const { data: wallet } = await supabaseAdmin.from('wallets').select('games_balance').eq('user_id', userId).single();
     if (!wallet)
       return res.status(400).json({ status: 'error', message: 'Could not retrieve wallet' });
 
-    const balance = parseFloat(wallet.gaming_wallet);
+    const balance = parseFloat(wallet.games_balance);
     const val = validateStake(stakeAmount, minStake, balance);
     if (!val.valid)
       return res.status(400).json({ status: 'error', message: val.error });
@@ -61,7 +61,7 @@ const playGame = async (req, res) => {
     const newBal = parseFloat((balance + profit).toFixed(2));
 
     await supabaseAdmin.from('wallets')
-      .update({ gaming_wallet: newBal, updated_at: new Date().toISOString() })
+      .update({ games_balance: newBal, updated_at: new Date().toISOString() })
       .eq('user_id', userId);
 
     const { data: round } = await supabaseAdmin.from('scratch_card_rounds').insert({

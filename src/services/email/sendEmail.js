@@ -3,22 +3,7 @@ const transporter = require('../../config/smtp');
 const emailTemplates = require('./templates');
 require('dotenv').config();
 
-// const sendEmail = async (to, subject, html) => {
-//   try {
-//     await transporter.sendMail({
-//       from: process.env.FROM_EMAIL,
-//       to,
-//       subject,
-//       html,
-//     });
-//     console.log(`Email sent successfully to ${to}`);
-//     return true;
-//   } catch (error) {
-//     console.error('Error sending email:', error.message);
-//     throw error;
-//   }
-// };
-
+ 
 
 const sendEmail = async (to, subject, html) => {
   try {
