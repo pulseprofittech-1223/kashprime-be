@@ -46,39 +46,56 @@ const generateWinningGrid = (symbolWeights) => {
   const otherSymbols = ALL_SYMBOLS.filter(s => s !== winSymbol);
   allPos.forEach(p => { grid[p] = otherSymbols[crypto.randomInt(0, otherSymbols.length)]; });
 
-  // Break any accidental extra 3-match from fill
-  const counts = {};
-  grid.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
-  for (const [sym, count] of Object.entries(counts)) {
-    if (sym !== winSymbol && count >= 3) {
-      let replaced = 0;
-      for (let i = 0; i < 9 && replaced < count - 2; i++) {
-        if (grid[i] === sym && !winPos.includes(i)) {
-          grid[i] = 'cherry';
-          replaced++;
+  // Robustly break any accidental extra 3-match from fill
+  let hasAccidentalMatch = true;
+  while (hasAccidentalMatch) {
+    hasAccidentalMatch = false;
+    const counts = {};
+    grid.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
+    
+    for (const [sym, count] of Object.entries(counts)) {
+      if (sym !== winSymbol && count >= 3) {
+        hasAccidentalMatch = true;
+        // Find a position with this symbol that isn't part of the winPos
+        const pos = grid.findIndex((s, idx) => s === sym && !winPos.includes(idx));
+        if (pos !== -1) {
+          // Change to a symbol that doesn't create a match (weighted towards cherry)
+          grid[pos] = 'cherry'; 
+        } else {
+            // If for some reason we can't find a safe spot, just pick the first match and flip it
+            // This shouldn't happen with 6 symbols and 9 slots
+            const firstIdx = grid.indexOf(sym);
+            if (!winPos.includes(firstIdx)) grid[firstIdx] = 'lemon';
         }
       }
     }
   }
+  
   return { grid, winSymbol, matchCount };
 };
 
 const generateLosingGrid = () => {
   const grid = Array.from({ length: 9 }, () => ALL_SYMBOLS[crypto.randomInt(0, ALL_SYMBOLS.length)]);
-  const counts = {};
-  grid.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
-  for (const [sym, count] of Object.entries(counts)) {
-    if (count >= 3) {
-      let broken = 0;
-      for (let i = 0; i < 9 && broken < count - 2; i++) {
-        if (grid[i] === sym) {
-          const others = ALL_SYMBOLS.filter(s => s !== sym);
-          grid[i] = others[crypto.randomInt(0, others.length)];
-          broken++;
-        }
+  
+  let hasMatch = true;
+  while (hasMatch) {
+    hasMatch = false;
+    const counts = {};
+    grid.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
+    
+    for (const [sym, count] of Object.entries(counts)) {
+      if (count >= 3) {
+        hasMatch = true;
+        // Break the match by picking one of the positions and changing it
+        const pos = grid.indexOf(sym);
+        const otherSymbols = ALL_SYMBOLS.filter(s => s !== sym);
+        grid[pos] = otherSymbols[crypto.randomInt(0, otherSymbols.length)];
+        // Break out of the symbol loop to re-scan from the start
+        break;
       }
     }
   }
+  
   return grid;
 };
 
