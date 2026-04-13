@@ -35,20 +35,49 @@ const kenoRoutes = require('./routes/keno.routes');
   
 const app = express();
 
-// CORS configuration
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
+  "http://localhost:5176",
+  "https://kashprime.com",
+  "https://www.kashprime.com",
+  "https://kashprime.netlify.app"
+];
+
+// Robust CORS implementation
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  // Clean origin by removing trailing slash for comparison
+  const cleanOrigin = origin ? origin.replace(/\/$/, "") : null;
+
+  if (cleanOrigin && allowedOrigins.includes(cleanOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Requested-With, Accept, Origin"
+  );
+
+  // Handle preflight (OPTIONS)
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  next();
+});
+
+// Also keep the cors package as a backup/standard for some library expectations
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://localhost:5175",
-      "http://localhost:5176",
-      "http://localhost:3000",
-      "https://kashprime.netlify.app",
-      "https://kashprime.com",
-      "https://www.kashprime.com",
-       
-    ].filter(Boolean),
+    origin: allowedOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [
@@ -58,9 +87,12 @@ app.use(
       "Accept",
       "Origin",
     ],
-    optionsSuccessStatus: 200, // Some legacy browsers (IE11, various SmartTVs) choke on 204
+    optionsSuccessStatus: 200,
   })
-);  
+);
+
+// Explicitly handle preflight requests for all routes
+app.options("*", cors());
         
 // Security middleware
 app.use(helmet({
