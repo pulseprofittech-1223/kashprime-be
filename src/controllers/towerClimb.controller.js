@@ -61,7 +61,7 @@ const startGame = async (req, res) => {
     }
 
     await supabaseAdmin.from('transactions').insert({
-      user_id: userId, transaction_type: 'gaming', earning_type: 'tower_climb_stake',
+      user_id: userId, transaction_type: 'gaming', balance_type: 'games_balance', earning_type: 'tower_climb_stake',
       amount: -stakeAmount, currency: 'NGN', status: 'completed',
       reference: generateTransactionReference('STAKE'),
       description: `Tower Climb stake - ₦${stakeAmount.toLocaleString()}`,
@@ -156,7 +156,7 @@ const revealTile = async (req, res) => {
           status: 'cashed_out', ended_at: new Date().toISOString()
         }).eq('id', round_id);
         await supabaseAdmin.from('transactions').insert({
-          user_id: userId, transaction_type: 'gaming', earning_type: 'tower_climb_win',
+          user_id: userId, transaction_type: 'gaming', balance_type: 'games_balance', earning_type: 'tower_climb_win',
           amount: payout, currency: 'NGN', status: 'completed',
           reference: generateTransactionReference('WIN'),
           description: `Tower Climb win - reached top at ${newMulti}×`,
@@ -193,7 +193,7 @@ const revealTile = async (req, res) => {
         status: 'fell', ended_at: new Date().toISOString()
       }).eq('id', round_id);
       await supabaseAdmin.from('transactions').insert({
-        user_id: userId, transaction_type: 'gaming', earning_type: 'tower_climb_loss',
+        user_id: userId, transaction_type: 'gaming', balance_type: 'games_balance', earning_type: 'tower_climb_loss',
         amount: -round.stake_amount, currency: 'NGN', status: 'completed',
         reference: generateTransactionReference('LOSS'),
         description: `Tower Climb loss - fell on floor ${currentFloorIndex + 1}`,
@@ -240,7 +240,7 @@ const cashOut = async (req, res) => {
       profit_loss: profit, status: 'cashed_out', ended_at: new Date().toISOString()
     }).eq('id', round_id);
     await supabaseAdmin.from('transactions').insert({
-      user_id: userId, transaction_type: 'gaming', earning_type: 'tower_climb_win',
+      user_id: userId, transaction_type: 'gaming', balance_type: 'games_balance', earning_type: 'tower_climb_win',
       amount: payout, currency: 'NGN', status: 'completed',
       reference: generateTransactionReference('WIN'),
       description: `Tower Climb cashout - ${round.current_multiplier}× at floor ${round.current_floor}`,

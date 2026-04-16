@@ -89,7 +89,7 @@ const playGame = async (req, res) => {
       ended_at: new Date().toISOString()
     }).select().single();
 
-    const txBase = { user_id: userId, currency: 'NGN', status: 'completed' };
+    const txBase = { user_id: userId, balance_type: 'games_balance', currency: 'NGN', status: 'completed' };
     await supabaseAdmin.from('transactions').insert([
       { ...txBase, transaction_type: 'gaming', earning_type: 'keno_stake', amount: -stakeAmount, reference: generateTransactionReference('STAKE'), description: `Keno stake - ₦${stakeAmount.toLocaleString()} (${picks.length} picks)`, metadata: { game: 'keno', round_id: round?.id, picks, stake_amount: stakeAmount } },
       ...(isWin

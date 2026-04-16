@@ -1816,13 +1816,34 @@ const getGameAnalytics = async (req, res) => {
 
     const rangeStart = timeframe === 'daily' ? dailyStart
                      : timeframe === 'weekly' ? weeklyStart
+                     : timeframe === 'all-time' ? new Date(0) // beginning of time
                      : monthlyStart;
 
-    // ── Earning type helpers (exact suffix match to avoid false positives) ──
-    const isWinType   = (et) => et && (et.endsWith('_win') || et === 'win' || et === 'cashout');
-    const isStakeType = (et) => et && (et.endsWith('_stake') || et === 'bet' || et === 'stake');
-    const isLossType  = (et) => et && (et.endsWith('_loss') || et === 'loss' || et === 'bust' || et === 'bomb');
-    const getGame     = (t)  => t.metadata?.game || (t.earning_type ? t.earning_type.split('_').slice(0, -1).join('_') : null);
+    // Calculate previous period
+    const prevRangeEnd = new Date(rangeStart);
+    let prevRangeStart = new Date(prevRangeEnd);
+    if (timeframe === 'daily') {
+      prevRangeStart.setDate(prevRangeEnd.getDate() - 1);
+    } else if (timeframe === 'weekly') {
+      prevRangeStart.setDate(prevRangeEnd.getDate() - 7);
+    } else if (timeframe === 'monthly') {
+      prevRangeStart.setDate(prevRangeEnd.getDate() - 30);
+    } else {
+      prevRangeStart = new Date(0); // For all-time, comparison is practically 0
+    }
+
+    // ── Earning type helpers (robust to legacy null earning_type) ──
+    const isWinType   = (t) => t && t.earning_type 
+      ? (t.earning_type.endsWith('_win') || t.earning_type === 'win' || t.earning_type === 'cashout')
+      : (t && parseFloat(t.amount || 0) > 0);
+
+    const isStakeType = (t) => t && t.earning_type
+      ? (t.earning_type.endsWith('_stake') || t.earning_type === 'bet' || t.earning_type === 'stake')
+      : (t && parseFloat(t.amount || 0) < 0 && !t.earning_type?.endsWith('_loss')); // Ignore explicit loss txns so we don't double count stakes
+
+    const isLossType  = (t) => t && t.earning_type && (t.earning_type.endsWith('_loss') || t.earning_type === 'loss' || t.earning_type === 'bust' || t.earning_type === 'bomb');
+
+    const getGame     = (t)  => (t && t.metadata?.game) || (t && t.earning_type ? t.earning_type.split('_').slice(0, -1).join('_') : null) || 'unknown';
 
     // ── 1. FETCH ALL GAMING TRANSACTIONS (90 days) ──────────────────────
     let allTxns = [];
@@ -1848,8 +1869,8 @@ const getGameAnalytics = async (req, res) => {
       if (!game) return;
       if (!gameRevMap[game]) gameRevMap[game] = { staked: 0, paid_out: 0 };
       const amt = Math.abs(parseFloat(t.amount || 0));
-      if (isStakeType(t.earning_type)) gameRevMap[game].staked   += amt;
-      else if (isWinType(t.earning_type))  gameRevMap[game].paid_out += amt;
+      if (isStakeType(t)) gameRevMap[game].staked   += amt;
+      else if (isWinType(t))  gameRevMap[game].paid_out += amt;
     });
 
     const gameRevenue = Object.entries(gameRevMap)
@@ -1865,6 +1886,7 @@ const getGameAnalytics = async (req, res) => {
     const gameRevenueWithPct = gameRevenue.map(g => ({
       ...g,
       percentage: totalRevenue > 0 ? Math.round((g.staked / totalRevenue) * 100) : 0,
+      payable_rate: g.staked > 0 ? parseFloat(((g.paid_out / g.staked) * 100).toFixed(1)) : 0,
     }));
 
     // ── 3. GAME SUCCESS RATES ────────────────────────────────────────────
@@ -1872,20 +1894,20 @@ const getGameAnalytics = async (req, res) => {
     allTxns.forEach(t => {
       const game = getGame(t);
       if (!game) return;
-      if (!successMap[game]) successMap[game] = { wins: 0, losses: 0 };
-      if (isWinType(t.earning_type))  successMap[game].wins++;
-      else if (isLossType(t.earning_type)) successMap[game].losses++;
+      if (!successMap[game]) successMap[game] = { wins: 0, totals: 0 };
+      if (isStakeType(t)) successMap[game].totals++;
+      if (isWinType(t))  successMap[game].wins++;
     });
 
     const successRates = Object.entries(successMap)
       .map(([game, val]) => {
-        const total = val.wins + val.losses;
+        const losses = Math.max(0, val.totals - val.wins);
         return {
           game,
           wins: val.wins,
-          losses: val.losses,
-          total,
-          rate: total > 0 ? parseFloat(((val.wins / total) * 100).toFixed(1)) : 0,
+          losses,
+          total: val.totals,
+          rate: val.totals > 0 ? parseFloat(((val.wins / val.totals) * 100).toFixed(1)) : 0,
         };
       })
       .filter(s => s.total > 0)
@@ -1894,9 +1916,12 @@ const getGameAnalytics = async (req, res) => {
     // ── 4. ENGAGEMENT HEATMAP (30 days, all gaming txns) ────────────────
     const heatmapMap = {};
     txns30d.forEach(t => {
-      const d   = new Date(t.created_at);
-      const key = `${d.getDay()}_${Math.floor(d.getHours() / 4)}`;
-      heatmapMap[key] = (heatmapMap[key] || 0) + 1;
+      // Only count game sessions (stakes), not both stake + win for one play
+      if (isStakeType(t)) {
+        const d   = new Date(t.created_at);
+        const key = `${d.getDay()}_${Math.floor(d.getHours() / 4)}`;
+        heatmapMap[key] = (heatmapMap[key] || 0) + 1;
+      }
     });
 
     const heatmapData = [];
@@ -1922,8 +1947,8 @@ const getGameAnalytics = async (req, res) => {
         cohortMap[label].users.push(u.id);
       });
 
-      // For checking who returned: use allTxns (already fetched, avoids extra DB call)
-      const allGameUserDates = allTxns.map(t => ({ user_id: t.user_id, created_at: new Date(t.created_at) }));
+      // Filter allTxns to just the stakes to define "returned to play"
+      const allGameUserDates = allTxns.filter(t => isStakeType(t)).map(t => ({ user_id: t.user_id, created_at: new Date(t.created_at) }));
 
       cohortData = Object.entries(cohortMap).slice(-6).map(([label, { users, signupDate }]) => {
         const checkRetention = (daysAfter) => {
@@ -1952,34 +1977,63 @@ const getGameAnalytics = async (req, res) => {
     // ── 6. TOP EARNERS ───────────────────────────────────────────────────
     let topEarners = [];
     try {
-      const { data: wallets } = await supabaseAdmin
-        .from('wallets')
-        .select('games_balance, users!inner(username, user_tier)')
-        .order('games_balance', { ascending: false })
-        .limit(10);
-      topEarners = (wallets || []).map((w, i) => ({
-        rank:          i + 1,
-        username:      w.users?.username,
-        user_tier:     w.users?.user_tier,
-        games_balance: parseFloat(w.games_balance || 0),
-      }));
+      if (timeframe === 'all-time') {
+        const { data: wallets } = await supabaseAdmin
+          .from('wallets')
+          .select('games_balance, users!inner(username, user_tier)')
+          .order('games_balance', { ascending: false })
+          .limit(10);
+        topEarners = (wallets || []).map((w, i) => ({
+          rank:          i + 1,
+          username:      w.users?.username,
+          user_tier:     w.users?.user_tier,
+          games_balance: parseFloat(w.games_balance || 0),
+        }));
+      } else {
+        const userNetMap = {};
+        txnsInRange.forEach(t => {
+          if (!t.user_id) return;
+          const amt = Math.abs(parseFloat(t.amount || 0));
+          if (isWinType(t)) {
+            userNetMap[t.user_id] = (userNetMap[t.user_id] || 0) + amt;
+          } else if (isStakeType(t)) {
+            userNetMap[t.user_id] = (userNetMap[t.user_id] || 0) - amt;
+          }
+        });
+        
+        const sortedUserIds = Object.keys(userNetMap)
+          .filter(uid => userNetMap[uid] > 0)
+          .sort((a, b) => userNetMap[b] - userNetMap[a])
+          .slice(0, 10);
+          
+        if (sortedUserIds.length > 0) {
+          const { data: uRows } = await supabaseAdmin
+            .from('users')
+            .select('id, username, user_tier')
+            .in('id', sortedUserIds);
+          
+          const map = {};
+          uRows?.forEach(u => { map[u.id] = u; });
+          
+          topEarners = sortedUserIds.map((uid, i) => ({
+            rank: i + 1,
+            username: map[uid]?.username || 'N/A',
+            user_tier: map[uid]?.user_tier || 'Free',
+            games_balance: Math.round(userNetMap[uid])
+          }));
+        }
+      }
     } catch (e) { console.warn('topEarners error:', e.message); }
 
     // ── 7. ALERTS ────────────────────────────────────────────────────────
     const alerts = [];
 
-    // Large wins today (amount > 5000, gaming wins only)
+    // Large wins in timeframe (amount >= 5000, gaming wins only)
     try {
-      const { data: bigWins } = await supabaseAdmin
-        .from('transactions')
-        .select('amount, created_at, user_id, metadata')
-        .eq('transaction_type', 'gaming')
-        .gte('created_at', dailyStart.toISOString())
-        .gte('amount', 5000)
-        .limit(20);
+      const bigWins = txnsInRange.filter(t => isWinType(t) && parseFloat(t.amount || 0) >= 5000);
 
       // Fetch usernames separately to avoid join issues
-      const bigWinUserIds = [...new Set((bigWins || []).map(t => t.user_id))];
+      const bigWinUserIds = [...new Set(bigWins.map(t => t.user_id))];
       let usernameMap = {};
       if (bigWinUserIds.length > 0) {
         const { data: uRows } = await supabaseAdmin
@@ -1987,7 +2041,7 @@ const getGameAnalytics = async (req, res) => {
         (uRows || []).forEach(u => { usernameMap[u.id] = u.username; });
       }
 
-      (bigWins || []).forEach(tx => {
+      bigWins.slice(0, 20).forEach(tx => {
         alerts.push({
           id:      `win_${tx.user_id}_${tx.created_at}`,
           type:    'critical',
@@ -2029,16 +2083,32 @@ const getGameAnalytics = async (req, res) => {
     } catch (e) { console.warn('pending alert error:', e.message); }
 
     // ── 8. KPI ───────────────────────────────────────────────────────────
-    const rangeStakes  = txnsInRange.filter(t => isStakeType(t.earning_type));
+    const rangeStakes  = txnsInRange.filter(t => isStakeType(t));
+    const rangeWins    = txnsInRange.filter(t => isWinType(t));
     const totalStaked  = rangeStakes.reduce((s, t) => s + Math.abs(parseFloat(t.amount || 0)), 0);
+    const totalPaidOut = rangeWins.reduce((s, t) => s + Math.abs(parseFloat(t.amount || 0)), 0);
     const totalSessions = rangeStakes.length;
-    const allWins  = allTxns.filter(t => isWinType(t.earning_type)).length;
-    const allPlays = allTxns.filter(t => isStakeType(t.earning_type) || isLossType(t.earning_type)).length;
+    
+    // Previous period KPI
+    const txnsInPrevRange = allTxns.filter(t => {
+      const dt = new Date(t.created_at);
+      return dt >= prevRangeStart && dt < prevRangeEnd;
+    });
+    const prevStakes = txnsInPrevRange.filter(t => isStakeType(t));
+    const prevWins   = txnsInPrevRange.filter(t => isWinType(t));
+    const prevTotalStaked  = prevStakes.reduce((s, t) => s + Math.abs(parseFloat(t.amount || 0)), 0);
+    const prevTotalPaidOut = prevWins.reduce((s, t) => s + Math.abs(parseFloat(t.amount || 0)), 0);
+    const prevTotalSessions = prevStakes.length;
+
+    const calcChange = (curr, prev) => prev > 0 ? parseFloat((((curr - prev) / prev) * 100).toFixed(1)) : (curr > 0 ? 100 : 0);
+
+    const allWins  = allTxns.filter(t => isWinType(t)).length;
+    const allPlays = allTxns.filter(t => isStakeType(t) || isLossType(t)).length; // fallback logic
     const avgWinRate = allPlays > 0 ? parseFloat(((allWins / allPlays) * 100).toFixed(1)) : 0;
 
     // Abandonment from 30-day stake vs win counts
-    const monthStakes = txns30d.filter(t => isStakeType(t.earning_type)).length;
-    const monthWins   = txns30d.filter(t => isWinType(t.earning_type)).length;
+    const monthStakes = txns30d.filter(t => isStakeType(t)).length;
+    const monthWins   = txns30d.filter(t => isWinType(t)).length;
     const abandonmentRate = monthStakes > 0
       ? Math.round(((monthStakes - monthWins) / monthStakes) * 100) : 0;
 
@@ -2047,19 +2117,52 @@ const getGameAnalytics = async (req, res) => {
       data: {
         kpi: {
           total_revenue:    Math.round(totalStaked),
+          total_payables:   Math.round(totalPaidOut),
           total_sessions:   totalSessions,
           avg_win_rate:     avgWinRate,
           alerts_count:     alerts.length,
           abandonment_rate: abandonmentRate,
           total_started:    monthStakes,
           total_cashed_out: monthWins,
+          changes: {
+            revenue:  calcChange(totalStaked, prevTotalStaked),
+            payables: calcChange(totalPaidOut, prevTotalPaidOut),
+            sessions: calcChange(totalSessions, prevTotalSessions),
+          }
         },
         game_revenue:  gameRevenueWithPct,
         success_rates: successRates,
         heatmap:       heatmapData,
         cohorts:       cohortData,
         top_earners:   topEarners,
-        alerts:        alerts.slice(0, 10),
+        alerts:        alerts.slice(0, 50),
+        overtime:      (() => {
+          const data = [];
+          if (timeframe === 'daily') {
+            for(let i=0; i<24; i++) data.push({ label: `${i}:00`, staked: 0, paid_out: 0 });
+          } else if (timeframe === 'weekly') {
+            for(let i=6; i>=0; i--) {
+              const d = new Date(); d.setDate(d.getDate() - i);
+              data.push({ label: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }), staked: 0, paid_out: 0 });
+            }
+          } else {
+            for(let i=29; i>=0; i--) {
+              const d = new Date(); d.setDate(d.getDate() - i);
+              data.push({ label: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }), staked: 0, paid_out: 0 });
+            }
+          }
+          txnsInRange.forEach(t => {
+            const dt = new Date(t.created_at);
+            let lb = timeframe === 'daily' ? dt.getHours() + ':00' : dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+            const b = data.find(x => x.label === lb);
+            if (b) {
+              const amt = Math.abs(parseFloat(t.amount || 0));
+              if (isStakeType(t)) b.staked += amt;
+              else if (isWinType(t)) b.paid_out += amt;
+            }
+          });
+          return data;
+        })()
       }
     });
 

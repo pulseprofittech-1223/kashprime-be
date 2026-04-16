@@ -71,7 +71,7 @@ const playGame = async (req, res) => {
       status: isWin ? 'won' : 'lost', ended_at: new Date().toISOString()
     }).select().single();
 
-    const txBase = { user_id: userId, currency: 'NGN', status: 'completed' };
+    const txBase = { user_id: userId, balance_type: 'games_balance', currency: 'NGN', status: 'completed' };
     await supabaseAdmin.from('transactions').insert([
       { ...txBase, transaction_type: 'gaming', earning_type: 'scratch_card_stake', amount: -stakeAmount, reference: generateTransactionReference('STAKE'), description: `Scratch Card stake - ₦${stakeAmount.toLocaleString()}`, metadata: { game: 'scratch_card', round_id: round?.id, stake_amount: stakeAmount } },
       ...(isWin

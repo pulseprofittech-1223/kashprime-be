@@ -5,3 +5,8 @@
 tests/integration/README.md
 tests/check_db.js
 tests/check_db.js
+test-analytics.js
+test-earning.js
+test-keno-rounds.js
+test-keno-tx.js
+test-keno.js

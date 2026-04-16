@@ -222,6 +222,7 @@ const playGame = async (req, res) => {
       .insert({
         user_id: userId,
         transaction_type: 'gaming',
+        balance_type: 'games_balance',
         earning_type: 'coinflip_stake',
         amount: -stake_amount,
         currency: 'NGN',
@@ -244,6 +245,7 @@ const playGame = async (req, res) => {
         .insert({
           user_id: userId,
           transaction_type: 'gaming',
+        balance_type: 'games_balance',
           earning_type: 'coinflip_win',
           amount: payoutAmount,
           currency: 'NGN',
@@ -267,6 +269,7 @@ const playGame = async (req, res) => {
         .insert({
           user_id: userId,
           transaction_type: 'gaming',
+        balance_type: 'games_balance',
           earning_type: 'coinflip_loss',
           amount: -stake_amount,
           currency: 'NGN',

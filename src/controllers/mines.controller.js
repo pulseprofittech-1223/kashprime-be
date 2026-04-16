@@ -164,6 +164,7 @@ const startGame = async (req, res) => {
     await supabaseAdmin.from('transactions').insert({
       user_id: userId,
       transaction_type: 'gaming',
+      balance_type: 'games_balance',
       earning_type: 'mines_stake',
       amount: -stake,
       currency: 'NGN',
@@ -271,6 +272,7 @@ const processGameResult = async (req, res) => {
       await supabaseAdmin.from('transactions').insert({
         user_id: userId,
         transaction_type: 'gaming',
+      balance_type: 'games_balance',
         earning_type: 'mines_loss',
         amount: -parseFloat(round.stake_amount),
         currency: 'NGN',
@@ -328,6 +330,7 @@ const processGameResult = async (req, res) => {
     await supabaseAdmin.from('transactions').insert({
       user_id: userId,
       transaction_type: 'gaming',
+      balance_type: 'games_balance',
       earning_type: 'mines_win',
       amount: payout,
       currency: 'NGN',

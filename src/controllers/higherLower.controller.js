@@ -119,7 +119,7 @@ const placeBet = async (req, res) => {
       status: isWin ? 'won' : 'lost', ended_at: new Date().toISOString()
     }).eq('id', round_id);
 
-    const txBase = { user_id: userId, currency: 'NGN', status: 'completed' };
+    const txBase = { user_id: userId, balance_type: 'games_balance', currency: 'NGN', status: 'completed' };
     await supabaseAdmin.from('transactions').insert([
       { ...txBase, transaction_type: 'gaming', earning_type: 'higher_lower_stake', amount: -stakeAmount, reference: generateTransactionReference('STAKE'), description: `H/L stake - ₦${stakeAmount.toLocaleString()}`, metadata: { game: 'higher_lower', round_id, shown: round.shown_number, direction, stake_amount: stakeAmount } },
       ...(isWin

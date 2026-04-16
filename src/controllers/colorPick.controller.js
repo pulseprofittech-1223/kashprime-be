@@ -79,7 +79,7 @@ const playGame = async (req, res) => {
       ended_at: new Date().toISOString()
     }).select().single();
 
-    const txBase = { user_id: userId, currency: 'NGN', status: 'completed' };
+    const txBase = { user_id: userId, balance_type: 'games_balance', currency: 'NGN', status: 'completed' };
     await supabaseAdmin.from('transactions').insert([
       { ...txBase, transaction_type: 'gaming', earning_type: 'color_pick_stake', amount: -stakeAmount, reference: generateTransactionReference('STAKE'), description: `Color Pick stake - ₦${stakeAmount.toLocaleString()}`, metadata: { game: 'color_pick', round_id: round?.id, player_choice, stake_amount: stakeAmount } },
       ...(isWin
