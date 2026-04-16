@@ -181,4 +181,10 @@ router.put('/settings', [
  */
 router.get('/dashboard/stats', adminController.getDashboardStats);
 
+/**
+ * GET /api/admin/game-analytics
+ * Comprehensive game analytics (revenue, heatmap, success rates, retention, alerts)
+ */
+router.get('/game-analytics', adminController.getGameAnalytics);
+
 module.exports = router;

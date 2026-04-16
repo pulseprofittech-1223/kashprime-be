@@ -1657,71 +1657,48 @@ const getDashboardStats = async (req, res) => {
     // 1. User Stats
     const { data: users, error: userError } = await supabaseAdmin
       .from('users')
-      .select('user_tier, role')
+      .select('user_tier, role, account_status')
       .neq('role', 'admin');
 
     if (userError) throw userError;
 
     const totalUsers = users.length;
-    const proUsersCount = users.filter(u => u.user_tier === 'Pro').length;
-    const freeUsersCount = totalUsers - proUsersCount;
+    const activeUsers = users.filter(u => u.account_status === 'active').length;
+    
+    const byTier = {
+      Pro: users.filter(u => u.user_tier === 'Pro').length,
+      Amateur: users.filter(u => u.user_tier === 'Amateur').length,
+      Free: users.filter(u => u.user_tier === 'Free').length
+    };
 
-    // 2. Platform Settings (for Pro Price)
-    const { data: settings } = await supabaseAdmin
-      .from('platform_settings')
-      .select('setting_key, setting_value')
-      .eq('setting_key', 'package_price_pro')
-      .single();
+    // 2. Pending Withdrawals
+    const { data: pendingWithdrawals, error: withdrawError } = await supabaseAdmin
+      .from('transactions')
+      .select('amount')
+      .eq('transaction_type', 'withdrawal')
+      .eq('status', 'pending');
 
-    const proPrice = parseFloat(settings?.setting_value || 15000);
+    if (withdrawError) throw withdrawError;
 
-    // 3. Game Stats (Revenue from Losses)
-    // Coinflip
-    const { data: coinflipRounds } = await supabaseAdmin
-      .from('coinflip_rounds')
-      .select('stake_amount, payout_amount');
+    const pendingCount = pendingWithdrawals?.length || 0;
+    const pendingAmount = pendingWithdrawals?.reduce((sum, tx) => sum + Math.abs(parseFloat(tx.amount)), 0) || 0;
 
-    const coinflipWagered = coinflipRounds?.reduce((sum, r) => sum + parseFloat(r.stake_amount), 0) || 0;
-    const coinflipPaidOut = coinflipRounds?.reduce((sum, r) => sum + parseFloat(r.payout_amount), 0) || 0;
-    const coinflipRevenue = coinflipWagered - coinflipPaidOut;
-
-    // Mines
-    const { data: minesRounds } = await supabaseAdmin
-      .from('mines_rounds')
-      .select('stake_amount, payout_amount');
-
-    const minesWagered = minesRounds?.reduce((sum, r) => sum + parseFloat(r.stake_amount), 0) || 0;
-    const minesPaidOut = minesRounds?.reduce((sum, r) => sum + parseFloat(r.payout_amount), 0) || 0;
-    const minesRevenue = minesWagered - minesPaidOut;
-
-    const totalGameRevenue = coinflipRevenue + minesRevenue;
-
-    // 4. Revenue Calculation
-    const proRevenue = proUsersCount * proPrice;
-    const totalRevenue = proRevenue + totalGameRevenue;
-
-    // 5. Payables
-    // Investments (Money not yet paid out)
-    const { data: activeInvestments } = await supabaseAdmin
-      .from('investments')
-      .select('total_return, total_paid_out')
-      .eq('status', 'active');
-
-    const investmentPayables = activeInvestments?.reduce((sum, inv) => {
-      const remaining = parseFloat(inv.total_return) - parseFloat(inv.total_paid_out);
-      return sum + (remaining > 0 ? remaining : 0);
-    }, 0) || 0;
-
-    // Referral Balance (Due to be withdrawn)
-    const { data: wallets } = await supabaseAdmin
+    // 3. Wallet Analytics (Balance Breakdown)
+    const { data: wallets, error: walletError } = await supabaseAdmin
       .from('wallets')
-      .select('referral_balance');
+      .select('games_balance, referral_balance, coins_balance, investment_balance');
 
-    const referralPayables = wallets?.reduce((sum, w) => sum + parseFloat(w.referral_balance || 0), 0) || 0;
+    if (walletError) throw walletError;
 
-    const totalPayables = investmentPayables + referralPayables;
+    const totalGames = wallets?.reduce((sum, w) => sum + parseFloat(w.games_balance || 0), 0) || 0;
+    const totalReferral = wallets?.reduce((sum, w) => sum + parseFloat(w.referral_balance || 0), 0) || 0;
+    const totalCoins = wallets?.reduce((sum, w) => sum + parseFloat(w.coins_balance || 0), 0) || 0;
+    const totalInvestment = wallets?.reduce((sum, w) => sum + parseFloat(w.investment_balance || 0), 0) || 0;
+    
+    // Combined balance excludes investment for the "Total Balance" if desired, or includes all
+    const combinedBalance = totalGames + totalReferral + totalCoins;
 
-    // 6. Kash Ads Stats
+    // 4. Kash Ads Stats
     const { data: kashAdsData } = await supabaseAdmin
       .from('kash_ads')
       .select('total_coins_earned, total_rewards_claimed');
@@ -1730,10 +1707,10 @@ const getDashboardStats = async (req, res) => {
     const kashAdsTotalClaims = kashAdsData?.reduce((sum, r) => sum + parseInt(r.total_rewards_claimed || 0), 0) || 0;
     const kashAdsParticipatingUsers = kashAdsData?.length || 0;
 
-    // 7. Recent Users
+    // 5. Recent Users
     const { data: recentUsers } = await supabaseAdmin
       .from('users')
-      .select('*')
+      .select('username, email, user_tier, created_at')
       .order('created_at', { ascending: false })
       .limit(10);
 
@@ -1743,31 +1720,26 @@ const getDashboardStats = async (req, res) => {
       data: {
         users: {
           total: totalUsers,
-          pro: proUsersCount,
-          free: freeUsersCount
+          active: activeUsers,
+          by_tier: byTier
+        },
+        withdrawals: {
+          pending_count: pendingCount,
+          pending_amount: pendingAmount
+        },
+        balance_growth: {
+          combined_balance: combinedBalance,
+          total_games_balance: totalGames,
+          total_referral_balance: totalReferral,
+          total_coins_balance: totalCoins,
+          total_investment_balance: totalInvestment
         },
         kash_ads: {
           total_earned: kashAdsTotalEarned,
           total_claims: kashAdsTotalClaims,
           users_count: kashAdsParticipatingUsers
         },
-        revenue: {
-          total: totalRevenue,
-          breakdown: {
-            pro_subscriptions: proRevenue,
-            games_revenue: totalGameRevenue,
-            coinflip_revenue: coinflipRevenue,
-            mines_revenue: minesRevenue
-          }
-        },
-        payables: {
-          total: totalPayables,
-          breakdown: {
-            investments_pending: investmentPayables,
-            referrals_due: referralPayables
-          }
-        },
-        recent_users: recentUsers
+        recent_users: recentUsers || []
       }
     });
 
@@ -1801,14 +1773,11 @@ const getTopEarners = async (req, res) => {
 
     const formattedEarners = topEarners?.map((entry, index) => ({
       rank: index + 1,
-      username: entry.users.username,
-      user_tier: entry.users.user_tier,
-      referral_balance: parseFloat(entry.referral_balance),
-      other_balances: {
-        coins: parseFloat(entry.coins_balance),
-        games: parseFloat(entry.games_balance),
-        investment: parseFloat(entry.investment_balance)
-      }
+      username: entry.users?.username || 'N/A',
+      user_tier: entry.users?.user_tier || 'Free',
+      referral_balance: parseFloat(entry.referral_balance || 0),
+      coins_balance: parseFloat(entry.coins_balance || 0),
+      games_balance: parseFloat(entry.games_balance || 0)
     })) || [];
 
     res.status(200).json({
@@ -1827,6 +1796,280 @@ const getTopEarners = async (req, res) => {
     });
   }
 };
+
+// ==================== GAME ANALYTICS ====================
+
+/**
+ * GET /api/admin/game-analytics
+ * Comprehensive game analytics: revenue, success rates, heatmap, retention, alerts
+ */
+const getGameAnalytics = async (req, res) => {
+  try {
+    const { timeframe = 'daily' } = req.query;
+
+    const now = new Date();
+    const dailyStart   = new Date(now); dailyStart.setHours(0, 0, 0, 0);
+    const weeklyStart  = new Date(now); weeklyStart.setDate(now.getDate() - 7);
+    const monthlyStart = new Date(now); monthlyStart.setDate(now.getDate() - 30);
+    const ninetyDaysAgo = new Date(now); ninetyDaysAgo.setDate(now.getDate() - 90);
+    const thirtyDaysAgo = new Date(now); thirtyDaysAgo.setDate(now.getDate() - 30);
+
+    const rangeStart = timeframe === 'daily' ? dailyStart
+                     : timeframe === 'weekly' ? weeklyStart
+                     : monthlyStart;
+
+    // ── Earning type helpers (exact suffix match to avoid false positives) ──
+    const isWinType   = (et) => et && (et.endsWith('_win') || et === 'win' || et === 'cashout');
+    const isStakeType = (et) => et && (et.endsWith('_stake') || et === 'bet' || et === 'stake');
+    const isLossType  = (et) => et && (et.endsWith('_loss') || et === 'loss' || et === 'bust' || et === 'bomb');
+    const getGame     = (t)  => t.metadata?.game || (t.earning_type ? t.earning_type.split('_').slice(0, -1).join('_') : null);
+
+    // ── 1. FETCH ALL GAMING TRANSACTIONS (90 days) ──────────────────────
+    let allTxns = [];
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('transactions')
+        .select('earning_type, amount, created_at, user_id, metadata')
+        .eq('transaction_type', 'gaming')
+        .gte('created_at', ninetyDaysAgo.toISOString())
+        .order('created_at', { ascending: false })
+        .limit(5000);
+      if (!error) allTxns = data || [];
+      else console.warn('getGameAnalytics allTxns error:', error.message);
+    } catch (e) { console.warn('getGameAnalytics allTxns catch:', e.message); }
+
+    const txnsInRange = allTxns.filter(t => new Date(t.created_at) >= rangeStart);
+    const txns30d     = allTxns.filter(t => new Date(t.created_at) >= thirtyDaysAgo);
+
+    // ── 2. REVENUE PER GAME ─────────────────────────────────────────────
+    const gameRevMap = {};
+    txnsInRange.forEach(t => {
+      const game = getGame(t);
+      if (!game) return;
+      if (!gameRevMap[game]) gameRevMap[game] = { staked: 0, paid_out: 0 };
+      const amt = Math.abs(parseFloat(t.amount || 0));
+      if (isStakeType(t.earning_type)) gameRevMap[game].staked   += amt;
+      else if (isWinType(t.earning_type))  gameRevMap[game].paid_out += amt;
+    });
+
+    const gameRevenue = Object.entries(gameRevMap)
+      .map(([game, val]) => ({
+        game,
+        staked:        Math.round(val.staked),
+        paid_out:      Math.round(val.paid_out),
+        house_revenue: Math.round(val.staked - val.paid_out),
+      }))
+      .sort((a, b) => b.staked - a.staked);
+
+    const totalRevenue = gameRevenue.reduce((s, g) => s + g.staked, 0);
+    const gameRevenueWithPct = gameRevenue.map(g => ({
+      ...g,
+      percentage: totalRevenue > 0 ? Math.round((g.staked / totalRevenue) * 100) : 0,
+    }));
+
+    // ── 3. GAME SUCCESS RATES ────────────────────────────────────────────
+    const successMap = {};
+    allTxns.forEach(t => {
+      const game = getGame(t);
+      if (!game) return;
+      if (!successMap[game]) successMap[game] = { wins: 0, losses: 0 };
+      if (isWinType(t.earning_type))  successMap[game].wins++;
+      else if (isLossType(t.earning_type)) successMap[game].losses++;
+    });
+
+    const successRates = Object.entries(successMap)
+      .map(([game, val]) => {
+        const total = val.wins + val.losses;
+        return {
+          game,
+          wins: val.wins,
+          losses: val.losses,
+          total,
+          rate: total > 0 ? parseFloat(((val.wins / total) * 100).toFixed(1)) : 0,
+        };
+      })
+      .filter(s => s.total > 0)
+      .sort((a, b) => b.total - a.total);
+
+    // ── 4. ENGAGEMENT HEATMAP (30 days, all gaming txns) ────────────────
+    const heatmapMap = {};
+    txns30d.forEach(t => {
+      const d   = new Date(t.created_at);
+      const key = `${d.getDay()}_${Math.floor(d.getHours() / 4)}`;
+      heatmapMap[key] = (heatmapMap[key] || 0) + 1;
+    });
+
+    const heatmapData = [];
+    for (let day = 0; day < 7; day++)
+      for (let block = 0; block < 6; block++)
+        heatmapData.push({ day, hour_block: block, count: heatmapMap[`${day}_${block}`] || 0 });
+
+    // ── 5. COHORT RETENTION ──────────────────────────────────────────────
+    let cohortData = [];
+    try {
+      const { data: signups } = await supabaseAdmin
+        .from('users')
+        .select('id, created_at')
+        .gte('created_at', monthlyStart.toISOString())
+        .neq('role', 'admin')
+        .order('created_at', { ascending: true });
+
+      // Group by date label (day precision)
+      const cohortMap = {};
+      (signups || []).forEach(u => {
+        const label = new Date(u.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+        if (!cohortMap[label]) cohortMap[label] = { users: [], signupDate: new Date(u.created_at) };
+        cohortMap[label].users.push(u.id);
+      });
+
+      // For checking who returned: use allTxns (already fetched, avoids extra DB call)
+      const allGameUserDates = allTxns.map(t => ({ user_id: t.user_id, created_at: new Date(t.created_at) }));
+
+      cohortData = Object.entries(cohortMap).slice(-6).map(([label, { users, signupDate }]) => {
+        const checkRetention = (daysAfter) => {
+          const windowStart = new Date(signupDate); windowStart.setDate(windowStart.getDate() + daysAfter - 1);
+          const windowEnd   = new Date(signupDate); windowEnd.setDate(windowEnd.getDate() + daysAfter + 1);
+          if (windowEnd > now) return null;
+          const returned = new Set(
+            allGameUserDates
+              .filter(t => users.includes(t.user_id) && t.created_at >= windowStart && t.created_at <= windowEnd)
+              .map(t => t.user_id)
+          ).size;
+          return users.length > 0 ? Math.round((returned / users.length) * 100) : 0;
+        };
+        return {
+          cohort: label,
+          size:   users.length,
+          d1:  checkRetention(1),
+          d3:  checkRetention(3),
+          d7:  checkRetention(7),
+          d14: checkRetention(14),
+          d30: checkRetention(30),
+        };
+      });
+    } catch (e) { console.warn('cohort error:', e.message); }
+
+    // ── 6. TOP EARNERS ───────────────────────────────────────────────────
+    let topEarners = [];
+    try {
+      const { data: wallets } = await supabaseAdmin
+        .from('wallets')
+        .select('games_balance, users!inner(username, user_tier)')
+        .order('games_balance', { ascending: false })
+        .limit(10);
+      topEarners = (wallets || []).map((w, i) => ({
+        rank:          i + 1,
+        username:      w.users?.username,
+        user_tier:     w.users?.user_tier,
+        games_balance: parseFloat(w.games_balance || 0),
+      }));
+    } catch (e) { console.warn('topEarners error:', e.message); }
+
+    // ── 7. ALERTS ────────────────────────────────────────────────────────
+    const alerts = [];
+
+    // Large wins today (amount > 5000, gaming wins only)
+    try {
+      const { data: bigWins } = await supabaseAdmin
+        .from('transactions')
+        .select('amount, created_at, user_id, metadata')
+        .eq('transaction_type', 'gaming')
+        .gte('created_at', dailyStart.toISOString())
+        .gte('amount', 5000)
+        .limit(20);
+
+      // Fetch usernames separately to avoid join issues
+      const bigWinUserIds = [...new Set((bigWins || []).map(t => t.user_id))];
+      let usernameMap = {};
+      if (bigWinUserIds.length > 0) {
+        const { data: uRows } = await supabaseAdmin
+          .from('users').select('id, username').in('id', bigWinUserIds);
+        (uRows || []).forEach(u => { usernameMap[u.id] = u.username; });
+      }
+
+      (bigWins || []).forEach(tx => {
+        alerts.push({
+          id:      `win_${tx.user_id}_${tx.created_at}`,
+          type:    'critical',
+          title:   'Large Game Win',
+          details: `${usernameMap[tx.user_id] || 'A user'} won ₦${parseFloat(tx.amount).toLocaleString()} on ${tx.metadata?.game || 'a game'}.`,
+          time:    new Date(tx.created_at).toLocaleTimeString(),
+        });
+      });
+    } catch (e) { console.warn('bigWins alert error:', e.message); }
+
+    // Activity spike alert
+    const sessionCount = txnsInRange.filter(t => isStakeType(t.earning_type)).length;
+    if (sessionCount > 50) {
+      alerts.push({
+        id:      'activity_spike',
+        type:    'warning',
+        title:   'High Activity Spike',
+        details: `${sessionCount} game sessions played in the selected ${timeframe} window.`,
+        time:    'Now',
+      });
+    }
+
+    // Pending withdrawals
+    try {
+      const { count: pendingCount } = await supabaseAdmin
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .eq('transaction_type', 'withdrawal')
+        .eq('status', 'pending');
+      if (pendingCount > 5) {
+        alerts.push({
+          id:      'pending_withdrawals',
+          type:    'warning',
+          title:   'Pending Withdrawals',
+          details: `${pendingCount} withdrawal requests are awaiting review.`,
+          time:    'Ongoing',
+        });
+      }
+    } catch (e) { console.warn('pending alert error:', e.message); }
+
+    // ── 8. KPI ───────────────────────────────────────────────────────────
+    const rangeStakes  = txnsInRange.filter(t => isStakeType(t.earning_type));
+    const totalStaked  = rangeStakes.reduce((s, t) => s + Math.abs(parseFloat(t.amount || 0)), 0);
+    const totalSessions = rangeStakes.length;
+    const allWins  = allTxns.filter(t => isWinType(t.earning_type)).length;
+    const allPlays = allTxns.filter(t => isStakeType(t.earning_type) || isLossType(t.earning_type)).length;
+    const avgWinRate = allPlays > 0 ? parseFloat(((allWins / allPlays) * 100).toFixed(1)) : 0;
+
+    // Abandonment from 30-day stake vs win counts
+    const monthStakes = txns30d.filter(t => isStakeType(t.earning_type)).length;
+    const monthWins   = txns30d.filter(t => isWinType(t.earning_type)).length;
+    const abandonmentRate = monthStakes > 0
+      ? Math.round(((monthStakes - monthWins) / monthStakes) * 100) : 0;
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        kpi: {
+          total_revenue:    Math.round(totalStaked),
+          total_sessions:   totalSessions,
+          avg_win_rate:     avgWinRate,
+          alerts_count:     alerts.length,
+          abandonment_rate: abandonmentRate,
+          total_started:    monthStakes,
+          total_cashed_out: monthWins,
+        },
+        game_revenue:  gameRevenueWithPct,
+        success_rates: successRates,
+        heatmap:       heatmapData,
+        cohorts:       cohortData,
+        top_earners:   topEarners,
+        alerts:        alerts.slice(0, 10),
+      }
+    });
+
+  } catch (error) {
+    console.error('getGameAnalytics error:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch game analytics' });
+  }
+};
+
+
 
 module.exports = {
   getAllUsers,
@@ -1848,4 +2091,5 @@ module.exports = {
   
   getDashboardStats,
   getTopEarners,
+  getGameAnalytics,
 };
