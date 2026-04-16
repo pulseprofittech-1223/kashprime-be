@@ -10,3 +10,4 @@ test-earning.js
 test-keno-rounds.js
 test-keno-tx.js
 test-keno.js
+db/migrations/20250117_kash_ads_enhancement.sql

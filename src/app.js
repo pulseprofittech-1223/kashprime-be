@@ -156,6 +156,7 @@ app.use("/api/games", gamesRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/sponsored-posts', sponsoredPostRoutes);
 app.use('/api/kash-ads', kashAdsRoutes);
+app.use('/api/user-ads', require('./routes/userAds.routes'));
 app.use('/api/codes', require('./routes/codes.routes'));
 
 // 404 handler - Express v5 compatible

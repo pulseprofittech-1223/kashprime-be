@@ -28,11 +28,11 @@ class PaymentController {
       }
 
       // Validate purpose
-      const validPurposes = ['gaming', 'investment', 'upgrade'];
+      const validPurposes = ['gaming', 'investment', 'upgrade', 'kash_ads'];
       if (!purpose || !validPurposes.includes(purpose)) {
         return res.status(400).json({
           success: false,
-          message: 'Purpose must be one of: gaming, investment, upgrade'
+          message: 'Purpose must be one of: gaming, investment, upgrade, kash_ads'
         });
       }
 
@@ -164,7 +164,8 @@ class PaymentController {
       const callbackUrls = {
         gaming: `${process.env.FRONTEND_URL}/gaming/wallet/success`,
         investment: `${process.env.FRONTEND_URL}/investments/success`,
-        upgrade: `${process.env.FRONTEND_URL}/profile/upgrade/success`
+        upgrade: `${process.env.FRONTEND_URL}/profile/upgrade/success`,
+        kash_ads: `${process.env.FRONTEND_URL}/kash-ads/success`
       };
 
       // Build metadata
@@ -177,6 +178,8 @@ class PaymentController {
           ? 'Gaming wallet funding' 
           : purpose === 'investment'
           ? `Investment - ${plan_name} plan`
+          : purpose === 'kash_ads'
+          ? 'Kash Ads Campaign Payment'
           : 'Pro tier upgrade'
       };
 
@@ -250,7 +253,7 @@ class PaymentController {
         });
       }
 
-      const validPurposes = ['gaming', 'investment', 'upgrade'];
+      const validPurposes = ['gaming', 'investment', 'upgrade', 'kash_ads'];
       if (!validPurposes.includes(purpose)) {
         return res.status(400).json({
           success: false,
@@ -305,6 +308,8 @@ class PaymentController {
 
       } else if (purpose === 'upgrade') {
         responseData = await PaymentController.processUpgrade(userId, paidAmount, reference, verification.data);
+      } else if (purpose === 'kash_ads') {
+        responseData = await PaymentController.processAdPayment(userId, paidAmount, reference, verification.data);
       }
 
       // 5. Return success response
@@ -673,6 +678,31 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
 
   return responseData;
 }
+
+  // Process Kash Ads payment
+  static async processAdPayment(userId, paidAmount, reference, verificationData) {
+    // Record transaction for ad submission verification
+    await supabaseAdmin
+      .from('transactions')
+      .insert({
+        user_id: userId,
+        transaction_type: 'deposit',
+        balance_type: 'kash_ads',
+        amount: paidAmount,
+        currency: 'NGN',
+        status: 'completed',
+        reference: reference,
+        description: 'Kash Ads Campaign Payment via Paystack',
+        metadata: verificationData,
+        created_at: new Date().toISOString()
+      });
+
+    return {
+      success: true,
+      amount: paidAmount,
+      reference: reference
+    };
+  }
   // Get transaction history
   static async getTransactionHistory(req, res) {
     try {

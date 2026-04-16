@@ -2025,62 +2025,97 @@ const getGameAnalytics = async (req, res) => {
       }
     } catch (e) { console.warn('topEarners error:', e.message); }
 
-    // ── 7. ALERTS ────────────────────────────────────────────────────────
+    // ── 7. ALERTS (UPGRADED) ─────────────────────────────────────────────
     const alerts = [];
-
-    // Large wins in timeframe (amount >= 5000, gaming wins only)
     try {
-      const bigWins = txnsInRange.filter(t => isWinType(t) && parseFloat(t.amount || 0) >= 5000);
-
-      // Fetch usernames separately to avoid join issues
-      const bigWinUserIds = [...new Set(bigWins.map(t => t.user_id))];
+      const allUserIdsInScope = [...new Set(txnsInRange.map(t => t.user_id))];
       let usernameMap = {};
-      if (bigWinUserIds.length > 0) {
+      if (allUserIdsInScope.length > 0) {
         const { data: uRows } = await supabaseAdmin
-          .from('users').select('id, username').in('id', bigWinUserIds);
+          .from('users').select('id, username').in('id', allUserIdsInScope);
         (uRows || []).forEach(u => { usernameMap[u.id] = u.username; });
       }
 
-      bigWins.slice(0, 20).forEach(tx => {
+      // Group and sort transactions by user for streak/ROI analysis
+      const txnsByUser = {};
+      txnsInRange.forEach(t => {
+        if (!t.user_id) return;
+        if (!txnsByUser[t.user_id]) txnsByUser[t.user_id] = [];
+        txnsByUser[t.user_id].push(t);
+      });
+
+      Object.entries(txnsByUser).forEach(([uid, uTxns]) => {
+        const sorted = uTxns.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        const username = usernameMap[uid] || 'User';
+
+        // ── Trigger 1: Win Streaks (Consecutive Wins) ──
+        const gameStreaks = {};
+        sorted.forEach(t => {
+          const game = getGame(t);
+          if (isWinType(t)) {
+            gameStreaks[game] = (gameStreaks[game] || 0) + 1;
+            if (gameStreaks[game] >= 4) { // More than 3 in a row
+              alerts.push({
+                id:      `streak_${uid}_${game}_${t.created_at}`,
+                type:    'critical',
+                title:   'High Win Streak',
+                details: `${username} won ${gameStreaks[game]} rounds consecutively on ${game}.`,
+                time:    new Date(t.created_at).toLocaleTimeString(),
+              });
+            }
+          } else if (isLossType(t)) {
+            // Explicit loss breaks the streak
+            gameStreaks[game] = 0;
+          }
+        });
+
+        // ── Trigger 2: Extraordinary Profitability (Payables > Stakes) ──
+        const uStaked  = uTxns.filter(t => isStakeType(t)).reduce((s, t) => s + Math.abs(parseFloat(t.amount || 0)), 0);
+        const uPaidOut = uTxns.filter(t => isWinType(t)).reduce((s, t) => s + Math.abs(parseFloat(t.amount || 0)), 0);
+        
+        if (uStaked > 500 && uPaidOut > uStaked * 2.5) {
+          alerts.push({
+            id:      `profitability_${uid}`,
+            type:    'warning',
+            title:   'High Player ROI',
+            details: `${username} has highly suspicious profit ratio (₦${uPaidOut.toLocaleString()} Won / ₦${uStaked.toLocaleString()} Staked).`,
+            time:    'Trend',
+          });
+        }
+      });
+
+      // ── Trigger 3: Large Single Wins (Traditional Alert) ──
+      txnsInRange.filter(t => isWinType(t) && parseFloat(t.amount || 0) >= 5000).slice(0, 5).forEach(tx => {
         alerts.push({
-          id:      `win_${tx.user_id}_${tx.created_at}`,
+          id:      `win_large_${tx.user_id}_${tx.created_at}`,
           type:    'critical',
-          title:   'Large Game Win',
-          details: `${usernameMap[tx.user_id] || 'A user'} won ₦${parseFloat(tx.amount).toLocaleString()} on ${tx.metadata?.game || 'a game'}.`,
+          title:   'Large Win Detected',
+          details: `${usernameMap[tx.user_id] || 'User'} won ₦${parseFloat(tx.amount).toLocaleString()} on ${getGame(tx)}.`,
           time:    new Date(tx.created_at).toLocaleTimeString(),
         });
       });
-    } catch (e) { console.warn('bigWins alert error:', e.message); }
 
-    // Activity spike alert
-    const sessionCount = txnsInRange.filter(t => isStakeType(t.earning_type)).length;
-    if (sessionCount > 50) {
-      alerts.push({
-        id:      'activity_spike',
-        type:    'warning',
-        title:   'High Activity Spike',
-        details: `${sessionCount} game sessions played in the selected ${timeframe} window.`,
-        time:    'Now',
-      });
-    }
-
-    // Pending withdrawals
-    try {
-      const { count: pendingCount } = await supabaseAdmin
-        .from('transactions')
-        .select('id', { count: 'exact', head: true })
-        .eq('transaction_type', 'withdrawal')
-        .eq('status', 'pending');
-      if (pendingCount > 5) {
+      // ── Trigger 4: Global Activity Spikes ──
+      const globalPlays = txnsInRange.filter(t => isStakeType(t)).length;
+      if (globalPlays > 100) {
         alerts.push({
-          id:      'pending_withdrawals',
+          id:      'activity_spike',
           type:    'warning',
-          title:   'Pending Withdrawals',
-          details: `${pendingCount} withdrawal requests are awaiting review.`,
-          time:    'Ongoing',
+          title:   'Activity Spike',
+          details: `${globalPlays} game rounds played within the current ${timeframe} window.`,
+          time:    'Real-time',
         });
       }
-    } catch (e) { console.warn('pending alert error:', e.message); }
+
+      // ── Trigger 5: Pending Withdrawals ──
+      const { count: pc } = await supabaseAdmin.from('transactions').select('id', { count: 'exact', head: true }).eq('transaction_type', 'withdrawal').eq('status', 'pending');
+      if (pc > 0) {
+        alerts.push({ id: 'pending_w', type: 'warning', title: 'Pending Bank Payouts', details: `${pc} withdrawal requests are currently pending review.`, time: 'Action Required' });
+      }
+
+    } catch (e) {
+      console.warn('Advanced alert logic error:', e.message);
+    }
 
     // ── 8. KPI ───────────────────────────────────────────────────────────
     const rangeStakes  = txnsInRange.filter(t => isStakeType(t));
