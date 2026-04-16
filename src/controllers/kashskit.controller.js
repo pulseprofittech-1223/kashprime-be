@@ -12,17 +12,17 @@ const claimVideoReward = async (req, res) => {
     const { video_id } = req.body;
     const userId = req.user.id;
 
-    // Check if VoxSkit is enabled
+    // Check if KashSkit is enabled
     const { data: enabledSetting } = await supabaseAdmin
       .from('platform_settings')
       .select('setting_value')
-      .eq('setting_key', 'voxskit_enabled')
+      .eq('setting_key', 'kashskit_enabled')
       .single();
 
     if (enabledSetting?.setting_value === 'false') {
       return res.status(403).json({
         status: 'error',
-        message: 'VoxSkit feature is currently disabled'
+        message: 'KashSkit feature is currently disabled'
       });
     }
 
@@ -42,7 +42,7 @@ const claimVideoReward = async (req, res) => {
 
     // Check if video exists and is active
     const { data: video, error: videoError } = await supabaseAdmin
-      .from('voxskit_videos')
+      .from('kashskit_videos')
       .select('*')
       .eq('id', video_id)
       .eq('is_active', true)
@@ -57,7 +57,7 @@ const claimVideoReward = async (req, res) => {
 
     // Check if user already claimed this video
     const { data: existingClaim } = await supabaseAdmin
-      .from('voxskit_user_claims')
+      .from('kashskit_user_claims')
       .select('id')
       .eq('user_id', userId)
       .eq('video_id', video_id)
@@ -75,14 +75,14 @@ const claimVideoReward = async (req, res) => {
     todayStart.setHours(0, 0, 0, 0);
 
     const { data: todayClaims } = await supabaseAdmin
-      .from('voxskit_user_claims')
+      .from('kashskit_user_claims')
       .select('id')
       .eq('user_id', userId)
       .gte('claimed_at', todayStart.toISOString());
 
     // Get daily limits from settings
     const isPaidUser = ['Amateur', 'Pro'].includes(user.user_tier);
-    const limitKey = isPaidUser ? 'voxskit_daily_limit_paid' : 'voxskit_daily_limit_free';
+    const limitKey = isPaidUser ? 'kashskit_daily_limit_paid' : 'kashskit_daily_limit_free';
 
     const { data: limitSetting } = await supabaseAdmin
       .from('platform_settings')
@@ -100,7 +100,7 @@ const claimVideoReward = async (req, res) => {
     }
 
     // Get reward amount based on user tier
-    const rewardKey = isPaidUser ? 'voxskit_reward_paid' : 'voxskit_reward_free';
+    const rewardKey = isPaidUser ? 'kashskit_reward_paid' : 'kashskit_reward_free';
 
     const { data: rewardSetting } = await supabaseAdmin
       .from('platform_settings')
@@ -112,7 +112,7 @@ const claimVideoReward = async (req, res) => {
 
     // Create claim record
     const { data: claim, error: claimError } = await supabaseAdmin
-      .from('voxskit_user_claims')
+      .from('kashskit_user_claims')
       .insert({
         user_id: userId,
         video_id: video_id,
@@ -149,7 +149,7 @@ const claimVideoReward = async (req, res) => {
 
     // Update video statistics
     await supabaseAdmin
-      .from('voxskit_videos')
+      .from('kashskit_videos')
       .update({
         claims_count: video.claims_count + 1,
         views_count: video.views_count + 1
@@ -166,8 +166,8 @@ const claimVideoReward = async (req, res) => {
         amount: rewardAmount,
         currency: 'NGN',
         status: 'completed',
-        description: `VoxSkit reward - ${video.skit_title}`,
-        reference: `VOXSKIT-${Date.now()}-${userId.slice(-4).toUpperCase()}`,
+        description: `KashSkit reward - ${video.skit_title}`,
+        reference: `KASHSKIT-${Date.now()}-${userId.slice(-4).toUpperCase()}`,
         metadata: {
           video_id: video_id,
           video_title: video.skit_title,
@@ -210,17 +210,17 @@ const getAvailableVideos = async (req, res) => {
     const userId = req.user.id;
     const offset = (page - 1) * limit;
 
-    // Check if VoxSkit is enabled
+    // Check if KashSkit is enabled
     const { data: enabledSetting } = await supabaseAdmin
       .from('platform_settings')
       .select('setting_value')
-      .eq('setting_key', 'voxskit_enabled')
+      .eq('setting_key', 'kashskit_enabled')
       .single();
 
     if (enabledSetting?.setting_value === 'false') {
       return res.status(403).json({
         status: 'error',
-        message: 'VoxSkit feature is currently disabled'
+        message: 'KashSkit feature is currently disabled'
       });
     }
 
@@ -238,7 +238,7 @@ const getAvailableVideos = async (req, res) => {
     todayStart.setHours(0, 0, 0, 0);
 
     const { data: todayClaims, error: claimsError } = await supabaseAdmin
-      .from('voxskit_user_claims')
+      .from('kashskit_user_claims')
       .select('video_id')
       .eq('user_id', userId)
       .gte('claimed_at', todayStart.toISOString());
@@ -249,7 +249,7 @@ const getAvailableVideos = async (req, res) => {
 
     // Get active videos excluding already claimed ones
     let query = supabaseAdmin
-      .from('voxskit_videos')
+      .from('kashskit_videos')
       .select('*', { count: 'exact' })
       .eq('is_active', true)
       .order('created_at', { ascending: false })
@@ -263,7 +263,7 @@ const getAvailableVideos = async (req, res) => {
     if (videoError) throw videoError;
 
     // Get daily limit from settings
-    const limitKey = isPaidUser ? 'voxskit_daily_limit_paid' : 'voxskit_daily_limit_free';
+    const limitKey = isPaidUser ? 'kashskit_daily_limit_paid' : 'kashskit_daily_limit_free';
 
     const { data: limitSetting } = await supabaseAdmin
       .from('platform_settings')
@@ -312,10 +312,10 @@ const getUserClaimHistory = async (req, res) => {
     const offset = (page - 1) * limit;
 
     const { data: claims, error, count } = await supabaseAdmin
-      .from('voxskit_user_claims')
+      .from('kashskit_user_claims')
       .select(`
         id, reward_amount, claimed_at,
-        voxskit_videos (
+        kashskit_videos (
           id, skit_title, creator, thumbnail_url
         )
       `, { count: 'exact' })
@@ -366,7 +366,7 @@ const uploadVideo = async (req, res) => {
 
     // Generate unique filename
     const fileExt = path.extname(req.file.originalname);
-    const fileName = `voxskit/${uuidv4()}${fileExt}`;
+    const fileName = `kashskit/${uuidv4()}${fileExt}`;
 
     // Upload to Supabase Storage
     const { data: uploadData, error: uploadError } = await supabaseAdmin
@@ -395,7 +395,7 @@ const uploadVideo = async (req, res) => {
 
     // Save video record to database
     const { data: video, error: dbError } = await supabaseAdmin
-      .from('voxskit_videos')
+      .from('kashskit_videos')
       .insert({
         skit_title,
         creator,
@@ -413,8 +413,8 @@ const uploadVideo = async (req, res) => {
       .from('admin_activities')
       .insert({
         admin_id: adminId,
-        activity_type: 'voxskit_video_uploaded',
-        description: `Uploaded VoxSkit video: ${skit_title}`,
+        activity_type: 'kashskit_video_uploaded',
+        description: `Uploaded KashSkit video: ${skit_title}`,
         metadata: { video_id: video.id, title: skit_title, creator }
       });
 
@@ -445,7 +445,7 @@ const getAllVideos = async (req, res) => {
     const offset = (page - 1) * limit;
 
     let query = supabaseAdmin
-      .from('voxskit_videos')
+      .from('kashskit_videos')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
@@ -491,7 +491,7 @@ const getVideoDetails = async (req, res) => {
     const { videoId } = req.params;
 
     const { data: video, error: videoError } = await supabaseAdmin
-      .from('voxskit_videos')
+      .from('kashskit_videos')
       .select('*')
       .eq('id', videoId)
       .single();
@@ -505,7 +505,7 @@ const getVideoDetails = async (req, res) => {
 
     // Get users who claimed this video
     const { data: claims } = await supabaseAdmin
-      .from('voxskit_user_claims')
+      .from('kashskit_user_claims')
       .select(`
         id, reward_amount, claimed_at,
         users (id, username, full_name, user_tier)
@@ -543,7 +543,7 @@ const deleteVideo = async (req, res) => {
 
     // Get video details
     const { data: video, error: videoError } = await supabaseAdmin
-      .from('voxskit_videos')
+      .from('kashskit_videos')
       .select('*')
       .eq('id', videoId)
       .single();
@@ -557,7 +557,7 @@ const deleteVideo = async (req, res) => {
 
     // Delete video file from storage
     if (video.video_url) {
-      const urlParts = video.video_url.split('/lumivox/');
+      const urlParts = video.video_url.split('/lumikash/');
       if (urlParts.length > 1) {
         const filePath = urlParts[1];
         await supabaseAdmin
@@ -569,7 +569,7 @@ const deleteVideo = async (req, res) => {
 
     // Delete video record
     const { error: deleteError } = await supabaseAdmin
-      .from('voxskit_videos')
+      .from('kashskit_videos')
       .delete()
       .eq('id', videoId);
 
@@ -580,8 +580,8 @@ const deleteVideo = async (req, res) => {
       .from('admin_activities')
       .insert({
         admin_id: adminId,
-        activity_type: 'voxskit_video_deleted',
-        description: `Deleted VoxSkit video: ${video.skit_title}`,
+        activity_type: 'kashskit_video_deleted',
+        description: `Deleted KashSkit video: ${video.skit_title}`,
         metadata: { video_id: videoId, title: video.skit_title }
       });
 
@@ -603,16 +603,116 @@ const deleteVideo = async (req, res) => {
 
  
 
+const toggleVideoStatus = async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    const { is_active } = req.body;
+
+    if (typeof is_active !== 'boolean') {
+      return res.status(400).json({ status: 'error', message: 'is_active must be a boolean' });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('kashskit_videos')
+      .update({ is_active, updated_at: new Date().toISOString() })
+      .eq('id', videoId)
+      .select()
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ status: 'error', message: 'Video not found' });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      message: `Video ${is_active ? 'activated' : 'deactivated'} successfully`,
+      data: { video: data }
+    });
+  } catch (error) {
+    console.error('Toggle video status error:', error);
+    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+};
+
+const getDailyStatus = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Check if KashSkit is enabled
+    const { data: enabledSetting } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_value')
+      .eq('setting_key', 'kashskit_enabled')
+      .single();
+
+    if (enabledSetting?.setting_value === 'false') {
+      return res.status(403).json({
+        status: 'error',
+        message: 'KashSkit feature is currently disabled'
+      });
+    }
+
+    const { data: user } = await supabaseAdmin
+      .from('users')
+      .select('user_tier')
+      .eq('id', userId)
+      .single();
+
+    const isPaidUser = ['Amateur', 'Pro'].includes(user?.user_tier);
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const { data: todayClaims } = await supabaseAdmin
+      .from('kashskit_user_claims')
+      .select('video_id')
+      .eq('user_id', userId)
+      .gte('claimed_at', todayStart.toISOString());
+
+    const limitKey = isPaidUser ? 'kashskit_daily_limit_paid' : 'kashskit_daily_limit_free';
+    const rewardKey = isPaidUser ? 'kashskit_reward_paid' : 'kashskit_reward_free';
+
+    const { data: limitSetting } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_value')
+      .eq('setting_key', limitKey)
+      .single();
+
+    const { data: rewardSetting } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_value')
+      .eq('setting_key', rewardKey)
+      .single();
+
+    const dailyLimit = parseInt(limitSetting?.setting_value || (isPaidUser ? 5 : 3));
+    const rewardAmount = parseFloat(rewardSetting?.setting_value || (isPaidUser ? 1000 : 500));
+    const claimsToday = todayClaims?.length || 0;
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Daily status retrieved',
+      data: {
+        claims_today: claimsToday,
+        daily_limit: dailyLimit,
+        remaining_claims: Math.max(0, dailyLimit - claimsToday),
+        can_claim_more: claimsToday < dailyLimit,
+        reward_per_video: rewardAmount,
+      }
+    });
+  } catch (error) {
+    console.error('Get daily status error:', error);
+    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+};
+
 module.exports = {
-  // User endpoints
-  getAvailableVideos,
   claimVideoReward,
+  getAvailableVideos,
   getUserClaimHistory,
-  
-  // Admin endpoints
-  uploadVideo,
   getAllVideos,
   getVideoDetails,
   deleteVideo,
-  
+  uploadVideo,
+  toggleVideoStatus,
+  getDailyStatus,
 };

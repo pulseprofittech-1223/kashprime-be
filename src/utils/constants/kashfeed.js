@@ -1,5 +1,5 @@
-// VOXFeed Constants and Messages
-// File: src/utils/constants/voxfeed.js
+// KASHFeed Constants and Messages
+// File: src/utils/constants/kashfeed.js
 
 const messages = {
   SUCCESS: {

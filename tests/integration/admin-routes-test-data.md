@@ -962,15 +962,15 @@ Authorization: Bearer ${ADMIN_TOKEN}
 
 ---
 
-## 4. VOXCOIN/COINS MANAGEMENT ROUTES
+## 4. KASHCOIN/COINS MANAGEMENT ROUTES
 
 ### 4.1 Get Eligible Users for Coins Withdrawal
 
-**Endpoint:** `GET /api/admin/voxcoin/eligible-users`
+**Endpoint:** `GET /api/admin/kashcoin/eligible-users`
 
 **Test Case 1: Basic Request**
 ```http
-GET /api/admin/voxcoin/eligible-users
+GET /api/admin/kashcoin/eligible-users
 Authorization: Bearer ${ADMIN_TOKEN}
 ```
 
@@ -1019,13 +1019,13 @@ Authorization: Bearer ${ADMIN_TOKEN}
 
 **Test Case 2: With Search**
 ```http
-GET /api/admin/voxcoin/eligible-users?search=john&page=1&limit=10
+GET /api/admin/kashcoin/eligible-users?search=john&page=1&limit=10
 Authorization: Bearer ${ADMIN_TOKEN}
 ```
 
 **Test Case 3: Sorted by Balance (Descending)**
 ```http
-GET /api/admin/voxcoin/eligible-users?sort_by=coins_balance&sort_order=desc
+GET /api/admin/kashcoin/eligible-users?sort_by=coins_balance&sort_order=desc
 Authorization: Bearer ${ADMIN_TOKEN}
 ```
 
@@ -1253,7 +1253,7 @@ Authorization: Bearer ${ADMIN_TOKEN}
         "total_used": 1115,
         "total_unused": 885
       },
-      "voxskit": {
+      "kashskit": {
         "total_videos_uploaded": 3456
       },
       "balance_growth": {
@@ -2283,15 +2283,15 @@ Authorization: Bearer ${ADMIN_TOKEN}
 
 ---
 
-## 15. VOXSKIT ADMIN ROUTES
+## 15. KASHSKIT ADMIN ROUTES
 
-### 15.1 Upload VoxSkit Video (Admin)
+### 15.1 Upload KashSkit Video (Admin)
 
-**Endpoint:** `POST /api/voxskit/admin/upload`
+**Endpoint:** `POST /api/kashskit/admin/upload`
 
 **Test Case 1: Upload New Video**
 ```http
-POST /api/voxskit/admin/upload
+POST /api/kashskit/admin/upload
 Authorization: Bearer ${ADMIN_TOKEN}
 Content-Type: multipart/form-data
 
@@ -2331,11 +2331,11 @@ Content-Type: multipart/form-data
 
 ### 15.2 Get All Videos (Admin)
 
-**Endpoint:** `GET /api/voxskit/admin/videos`
+**Endpoint:** `GET /api/kashskit/admin/videos`
 
 **Test Case 1: Get All Videos with Pagination**
 ```http
-GET /api/voxskit/admin/videos?page=1&limit=20
+GET /api/kashskit/admin/videos?page=1&limit=20
 Authorization: Bearer ${ADMIN_TOKEN}
 ```
 
@@ -2374,13 +2374,13 @@ Authorization: Bearer ${ADMIN_TOKEN}
 
 **Test Case 2: Filter by Active Status**
 ```http
-GET /api/voxskit/admin/videos?is_active=true&page=1&limit=20
+GET /api/kashskit/admin/videos?is_active=true&page=1&limit=20
 Authorization: Bearer ${ADMIN_TOKEN}
 ```
 
 **Test Case 3: Search by Title**
 ```http
-GET /api/voxskit/admin/videos?search=comedy&page=1&limit=20
+GET /api/kashskit/admin/videos?search=comedy&page=1&limit=20
 Authorization: Bearer ${ADMIN_TOKEN}
 ```
 
@@ -2388,11 +2388,11 @@ Authorization: Bearer ${ADMIN_TOKEN}
 
 ### 15.3 Get Video Details (Admin)
 
-**Endpoint:** `GET /api/voxskit/admin/videos/:videoId`
+**Endpoint:** `GET /api/kashskit/admin/videos/:videoId`
 
 **Test Case 1: Get Detailed Video Statistics**
 ```http
-GET /api/voxskit/admin/videos/video-uuid
+GET /api/kashskit/admin/videos/video-uuid
 Authorization: Bearer ${ADMIN_TOKEN}
 ```
 
@@ -2445,11 +2445,11 @@ Authorization: Bearer ${ADMIN_TOKEN}
 
 ### 15.4 Delete Video (Admin)
 
-**Endpoint:** `DELETE /api/voxskit/admin/videos/:videoId`
+**Endpoint:** `DELETE /api/kashskit/admin/videos/:videoId`
 
 **Test Case 1: Delete Video**
 ```http
-DELETE /api/voxskit/admin/videos/video-uuid
+DELETE /api/kashskit/admin/videos/video-uuid
 Authorization: Bearer ${ADMIN_TOKEN}
 ```
 
@@ -2560,7 +2560,7 @@ Authorization: Bearer ${ADMIN_TOKEN}
 6. `GET /withdrawals/pending` - Get pending withdrawals
 7. `PUT /withdrawals/:transactionId/process` - Process withdrawal
 8. `PUT /withdrawals/bulk-process` - Bulk process withdrawals
-9. `GET /voxcoin/eligible-users` - Get coins eligible users
+9. `GET /kashcoin/eligible-users` - Get coins eligible users
 10. `GET /settings` - Get platform settings
 11. `PUT /settings` - Update platform setting
 12. `GET /dashboard/stats` - Get dashboard statistics
@@ -2589,11 +2589,11 @@ Authorization: Bearer ${ADMIN_TOKEN}
 27. `PUT /api/sponsored-posts/admin/:id` - Update sponsored post
 28. `DELETE /api/sponsored-posts/admin/:id` - Delete sponsored post
 
-#### VoxSkit Admin Routes
-29. `POST /api/voxskit/admin/upload` - Upload video
-30. `GET /api/voxskit/admin/videos` - Get all videos
-31. `GET /api/voxskit/admin/videos/:videoId` - Get video details
-32. `DELETE /api/voxskit/admin/videos/:videoId` - Delete video
+#### KashSkit Admin Routes
+29. `POST /api/kashskit/admin/upload` - Upload video
+30. `GET /api/kashskit/admin/videos` - Get all videos
+31. `GET /api/kashskit/admin/videos/:videoId` - Get video details
+32. `DELETE /api/kashskit/admin/videos/:videoId` - Delete video
 
 #### Payments Admin Routes
 33. `GET /api/payments/admin/all-transactions` - Get all payment transactions
@@ -2635,7 +2635,7 @@ Authorization: Bearer ${ADMIN_TOKEN}
   - [ ] Update post
   - [ ] Delete post
 
-- [ ] **VoxSkit Admin Routes** (4 endpoints)
+- [ ] **KashSkit Admin Routes** (4 endpoints)
   - [ ] Upload video
   - [ ] Get all videos
   - [ ] Get video details
@@ -2687,7 +2687,7 @@ KashPrime Admin API/
 │   ├── Get All Posts
 │   ├── Update Post
 │   └── Delete Post
-├── VoxSkit Admin/
+├── KashSkit Admin/
 │   ├── Upload Video
 │   ├── Get All Videos
 │   ├── Get Video Details

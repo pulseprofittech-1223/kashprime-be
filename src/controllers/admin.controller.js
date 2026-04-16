@@ -1116,9 +1116,10 @@ const getWithdrawalStatistics = async (req, res) => {
     const { data: stats, error } = await supabaseAdmin
       .rpc('get_withdrawal_stats');
 
-    if (error) throw error;
-
-    if (!stats) {
+    if (error || !stats) {
+      if (error && error.code !== 'PGRST202') {
+        console.warn('RPC get_withdrawal_stats failed or missing, falling back to manual queries details:', error.message);
+      }
       const [pendingResult, completedResult, cancelledResult] = await Promise.all([
         supabaseAdmin
           .from('transactions')
@@ -1178,9 +1179,174 @@ const getWithdrawalStatistics = async (req, res) => {
   }
 };
 
-// ==================== COINS (VOXCOIN) MANAGEMENT ====================
+// ==================== COINS (KASHCOIN) MANAGEMENT ====================
 
-const getVoxcoinEligibleUsers = async (req, res) => {
+/**
+ * GET /api/admin/kashcoin/statistics
+ * Comprehensive analytics for KASHcoin system
+ */
+const getKashcoinStatistics = async (req, res) => {
+  try {
+    // 1. Get Dynamic Payout Threshold
+    const { data: settings } = await supabaseAdmin.from('platform_settings').select('setting_key, setting_value');
+    const settingsMap = {};
+    settings?.forEach(s => settingsMap[s.setting_key] = s.setting_value);
+    
+    const threshold = parseFloat(settingsMap['coins_withdrawal_threshold_amount'] || 50000);
+
+    // 2. Fetch High-Level Wallet Stats
+    const { data: allWallets, error: walletError } = await supabaseAdmin
+      .from('wallets')
+      .select('coins_balance, user_id');
+
+    if (walletError) throw walletError;
+
+    const totalCoinsPool = allWallets.reduce((sum, w) => sum + parseFloat(w.coins_balance || 0), 0);
+    const eligibleWallets = allWallets.filter(w => parseFloat(w.coins_balance) >= threshold);
+    const totalPayableUsers = eligibleWallets.length;
+    const totalPayableAmount = eligibleWallets.reduce((sum, w) => sum + parseFloat(w.coins_balance || 0), 0);
+    const pendingNearThreshold = allWallets.filter(w => {
+      const bal = parseFloat(w.coins_balance);
+      return bal >= (threshold * 0.8) && bal < threshold;
+    }).length;
+
+    // 3. Fetch Transactional Trends (Last 30 Days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const { data: recentTransactions, error: txError } = await supabaseAdmin
+      .from('transactions')
+      .select('amount, transaction_type, created_at, user_id, status')
+      .eq('balance_type', 'coins_balance')
+      .gte('created_at', thirtyDaysAgo.toISOString());
+
+    if (txError) throw txError;
+
+    // Aggregate Daily Earnings
+    const dailyEarnings = {};
+    
+    recentTransactions.forEach(tx => {
+      const date = tx.created_at.split('T')[0];
+      const amount = Math.abs(parseFloat(tx.amount));
+      
+      // Treat any positive transaction or reward-like type as an earning
+      const isEarning = tx.transaction_type.toLowerCase().includes('reward') || 
+                        tx.transaction_type.toLowerCase().includes('earning') ||
+                        tx.transaction_type === 'gaming' ||
+                        parseFloat(tx.amount) > 0;
+
+      if (isEarning && tx.transaction_type !== 'withdrawal') {
+        dailyEarnings[date] = (dailyEarnings[date] || 0) + amount;
+      }
+    });
+
+    const earningsChartData = Object.keys(dailyEarnings).sort().map(date => ({
+      date,
+      amount: dailyEarnings[date],
+      display_date: new Date(date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    }));
+
+    // 4. Calculate PAID & EARNING Rankings
+    const getRanking = async (type = 'withdrawal', days = 0) => {
+      let query = supabaseAdmin
+        .from('transactions')
+        .select(`
+          amount,
+          user_id,
+          transaction_type,
+          users:user_id (
+            username,
+            full_name,
+            profile_picture
+          )
+        `)
+        .eq('balance_type', 'coins_balance');
+
+      if (type === 'withdrawal') {
+        query = query.eq('transaction_type', 'withdrawal').eq('status', 'completed');
+      } else {
+        // For Earnings: include everything except withdrawals
+        query = query.not('transaction_type', 'eq', 'withdrawal');
+      }
+      
+      if (days > 0) {
+        const dateLimit = new Date();
+        dateLimit.setDate(dateLimit.getDate() - days);
+        query = query.gte('created_at', dateLimit.toISOString());
+      }
+
+      const { data } = await query;
+      
+      const userSums = {};
+      data?.forEach(tx => {
+        const uid = tx.user_id;
+        if (!userSums[uid]) {
+          userSums[uid] = { 
+            id: uid,
+            username: tx.users?.username || 'Unknown',
+            full_name: tx.users?.full_name || 'N/A',
+            profile_picture: tx.users?.profile_picture,
+            amount: 0 
+          };
+        }
+        userSums[uid].amount += Math.abs(parseFloat(tx.amount));
+      });
+
+      return Object.values(userSums)
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 5);
+    };
+
+    const rankings = {
+      payouts: {
+        today: await getRanking('withdrawal', 1),
+        week: await getRanking('withdrawal', 7),
+        month: await getRanking('withdrawal', 30),
+        all_time: await getRanking('withdrawal', 0)
+      },
+      earnings: {
+        today: await getRanking('earning', 1),
+        week: await getRanking('earning', 7),
+        month: await getRanking('earning', 30),
+        all_time: await getRanking('earning', 0)
+      }
+    };
+
+    // 5. Total Coins Paid Out to Users
+    const { data: allPayouts } = await supabaseAdmin
+      .from('transactions')
+      .select('amount')
+      .eq('balance_type', 'coins_balance')
+      .eq('transaction_type', 'withdrawal')
+      .eq('status', 'completed');
+
+    const totalPaidOut = allPayouts?.reduce((sum, tx) => sum + Math.abs(parseFloat(tx.amount)), 0) || 0;
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        summary: {
+          total_pool: totalCoinsPool,
+          total_payable_users: totalPayableUsers,
+          total_payable_amount: totalPayableAmount,
+          near_threshold_count: pendingNearThreshold,
+          total_paid_out: totalPaidOut,
+          payout_threshold: threshold
+        },
+        charts: {
+          earnings: earningsChartData
+        },
+        rankings: rankings
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching analytics:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch analytics' });
+  }
+};
+
+const getKashcoinEligibleUsers = async (req, res) => {
   try {
     const {
       page = 1,
@@ -1193,20 +1359,35 @@ const getVoxcoinEligibleUsers = async (req, res) => {
     const { data: settings } = await supabaseAdmin
       .from('platform_settings')
       .select('setting_key, setting_value')
-      .in('setting_key', ['coins_withdrawal_threshold', 'voxcoin_withdrawal_threshold']);
+      .in('setting_key', ['coins_withdrawal_threshold_amount', 'coins_withdrawal_threshold', 'kashcoin_withdrawal_threshold']);
 
-    const thresholdVal = settings?.find(s => s.setting_key === 'coins_withdrawal_threshold')?.setting_value 
-                      || settings?.find(s => s.setting_key === 'voxcoin_withdrawal_threshold')?.setting_value 
-                      || 40000;
-    const threshold = parseFloat(thresholdVal);
+    const getRawSettingValue = (key) => {
+      const row = settings?.find(s => s.setting_key === key);
+      if (!row) return null;
+      try {
+        // Platform settings might be stored as JSON strings
+        const parsed = JSON.parse(row.setting_value);
+        return parsed;
+      } catch (e) {
+        return row.setting_value;
+      }
+    };
+
+    const thresholdVal = getRawSettingValue('coins_withdrawal_threshold_amount') || 50000;
+    
+    const threshold = parseFloat(thresholdVal) || 50000;
 
     const offset = (page - 1) * limit;
 
+    // Start with wallets because that's where the balance and filtering happens
     let query = supabaseAdmin
       .from('wallets')
       .select(`
         coins_balance,
-        users!inner (
+        account_name,
+        bank_name,
+        account_number,
+        users:user_id (
           id, username, full_name, email, phone_number, created_at
         )
       `)
@@ -1215,32 +1396,22 @@ const getVoxcoinEligibleUsers = async (req, res) => {
       .order('coins_balance', { ascending: sort_order === 'asc' });
 
     if (search) {
-      const { data: searchUsers, error: searchError } = await supabaseAdmin
+      // If searching, we need to filter by user details
+      // In Supabase, filtering on a joined table in a select is done via !inner or filters
+      // But one of the easiest ways is to get user IDs first if search is provided
+      const { data: searchUsers } = await supabaseAdmin
         .from('users')
         .select('id')
         .or(`full_name.ilike.%${search}%,email.ilike.%${search}%,username.ilike.%${search}%`);
       
-      if (searchError) throw searchError;
-
       if (searchUsers && searchUsers.length > 0) {
-        const userIds = searchUsers.map(user => user.id);
-        query = query.in('user_id', userIds);
+        query = query.in('user_id', searchUsers.map(u => u.id));
       } else {
+        // No users match search, return empty early
         return res.status(200).json({
           status: 'success',
-          message: 'Eligible users retrieved successfully',
-          data: {
-            users: [],
-            threshold,
-            pagination: {
-              current_page: parseInt(page),
-              total_pages: 0,
-              total_users: 0,
-              has_next: false,
-              has_prev: page > 1,
-              limit: parseInt(limit)
-            }
-          }
+          message: 'No matching users found',
+          data: { users: [], threshold, pagination: { current_page: parseInt(page), total_pages: 0, total_users: 0, has_next: false, has_prev: page > 1, limit: parseInt(limit) } }
         });
       }
     }
@@ -1248,9 +1419,10 @@ const getVoxcoinEligibleUsers = async (req, res) => {
     const { data: eligibleUsers, error } = await query;
     if (error) throw error;
 
+    // Count query
     let countQuery = supabaseAdmin
       .from('wallets')
-      .select('user_id', { count: 'exact', head: true })
+      .select('*', { count: 'exact', head: true })
       .gte('coins_balance', threshold);
 
     if (search) {
@@ -1258,10 +1430,8 @@ const getVoxcoinEligibleUsers = async (req, res) => {
         .from('users')
         .select('id')
         .or(`full_name.ilike.%${search}%,email.ilike.%${search}%,username.ilike.%${search}%`);
-      
-      if (searchUsers && searchUsers.length > 0) {
-        const userIds = searchUsers.map(user => user.id);
-        countQuery = countQuery.in('user_id', userIds);
+      if (searchUsers) {
+        countQuery = countQuery.in('user_id', searchUsers.map(u => u.id));
       }
     }
 
@@ -1271,7 +1441,7 @@ const getVoxcoinEligibleUsers = async (req, res) => {
       status: 'success',
       message: 'Eligible users retrieved successfully',
       data: {
-        users: eligibleUsers,
+        users: eligibleUsers || [],
         threshold,
         pagination: {
           current_page: parseInt(page),
@@ -1292,6 +1462,118 @@ const getVoxcoinEligibleUsers = async (req, res) => {
     });
   }
 };
+
+const processKashcoinPayments = async (req, res) => {
+  try {
+    const { user_ids } = req.body;
+
+    if (!user_ids || !Array.isArray(user_ids) || user_ids.length === 0) {
+      return res.status(400).json({ status: 'error', message: 'No users selected' });
+    }
+
+    const { data: settings } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_key, setting_value')
+      .in('setting_key', ['coins_withdrawal_threshold_amount', 'coins_withdrawal_threshold', 'kashcoin_withdrawal_threshold']);
+
+    const getRawSettingValue = (key) => {
+      const row = settings?.find(s => s.setting_key === key);
+      if (!row) return null;
+      try { return JSON.parse(row.setting_value); }
+      catch (e) { return row.setting_value; }
+    };
+
+    const thresholdVal = getRawSettingValue('coins_withdrawal_threshold_amount') 
+                      || getRawSettingValue('coins_withdrawal_threshold') 
+                      || getRawSettingValue('kashcoin_withdrawal_threshold') 
+                      || 50000;
+    
+    const threshold = parseFloat(thresholdVal) || 50000;
+
+    const results = [];
+    for (const userId of user_ids) {
+      const { data: wallet, error: fetchError } = await supabaseAdmin
+        .from('wallets')
+        .select('coins_balance, total_withdrawn_coins, account_name, bank_name, account_number')
+        .eq('user_id', userId)
+        .single();
+
+      if (fetchError || !wallet) {
+        results.push({ user_id: userId, status: 'error', message: 'Wallet not found' });
+        continue;
+      }
+
+      const currentBalance = parseFloat(wallet.coins_balance);
+      if (currentBalance < threshold) {
+        results.push({ user_id: userId, status: 'error', message: 'Insufficient balance' });
+        continue;
+      }
+
+      const newBalance = currentBalance - threshold;
+      const newWithdrawn = parseFloat(wallet.total_withdrawn_coins || 0) + threshold;
+
+      const { error: updateError } = await supabaseAdmin
+        .from('wallets')
+        .update({
+          coins_balance: newBalance,
+          total_withdrawn_coins: newWithdrawn,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', userId);
+
+      if (updateError) {
+        results.push({ user_id: userId, status: 'error', message: 'Update failed' });
+        continue;
+      }
+
+      const timestamp = new Date().toISOString();
+      const reference = `WD-PAYOUT-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      const txRecord = {
+        user_id: userId,
+        transaction_type: 'withdrawal',
+        balance_type: 'coins_balance',
+        earning_type: 'withdrawal_payout',
+        amount: threshold,
+        currency: 'NGN',
+        status: 'completed',
+        reference: reference,
+        description: `Kashcoin withdrawal payout: ₦${threshold.toLocaleString()}`,
+        withdrawal_method: 'bank_transfer',
+        metadata: {
+          account_name: wallet.account_name || 'N/A',
+          bank_name: wallet.bank_name || 'N/A',
+          account_number: wallet.account_number || 'N/A',
+          processed_by_admin: req.user.id,
+          processed_at: timestamp,
+          payment_category: 'kashcoin_payout'
+        }
+      };
+
+      console.log(`[PAYOUT] Attempting to log transaction for user ${userId}...`);
+      const { data: txData, error: txError } = await supabaseAdmin.from('transactions').insert(txRecord).select().single();
+
+      if (txError) {
+        console.error(`[PAYOUT ERROR] Database rejected transaction for user ${userId}:`, txError);
+        results.push({ user_id: userId, status: 'partial_success', message: txError.message });
+      } else {
+        console.log(`[PAYOUT SUCCESS] Transaction recorded with ID: ${txData?.id}`);
+        results.push({ user_id: userId, status: 'success', transaction_id: txData?.id });
+      }
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Processing complete',
+      data: { results }
+    });
+
+  } catch (error) {
+    console.error('Process kashcoin payments error:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+};
+
 
 // ==================== PLATFORM SETTINGS ====================
 
@@ -1322,12 +1604,18 @@ const getSettings = async (req, res) => {
 const updateSetting = async (req, res) => {
   try {
     const { setting_key, setting_value } = req.body;
+    
+    // Ensure we stringify objects or arrays if the DB expects JSON/Text that is stringified.
+    // Given the DB stores '"true"', '"100"', we must stringify if it's not already stringified.
+    let valueToStore = setting_value;
+    if (typeof setting_value === 'string' || typeof setting_value === 'number' || typeof setting_value === 'boolean' || typeof setting_value === 'object') {
+       valueToStore = JSON.stringify(setting_value);
+    }
 
     const { data: updatedSetting, error } = await supabaseAdmin
       .from('platform_settings')
       .update({
-        setting_value,
-        updated_by: req.user.id,
+        setting_value: valueToStore,
         updated_at: new Date().toISOString()
       })
       .eq('setting_key', setting_key)
@@ -1335,6 +1623,10 @@ const updateSetting = async (req, res) => {
       .single();
 
     if (error) throw error;
+
+    // Clear settings cache so changes apply immediately
+    const { clearCache } = require('./settings.controller');
+    clearCache();
 
     await supabaseAdmin
       .from('admin_activities')
@@ -1547,7 +1839,9 @@ module.exports = {
   bulkProcessWithdrawals,
   getWithdrawalStatistics,
 
-  getVoxcoinEligibleUsers,
+  getKashcoinEligibleUsers,
+  processKashcoinPayments,
+  getKashcoinStatistics,
   
   getSettings,
   updateSetting,

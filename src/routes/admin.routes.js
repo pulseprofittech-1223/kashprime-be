@@ -90,6 +90,12 @@ router.put('/users/:userId/status', [
 // ==================== WITHDRAWAL MANAGEMENT ROUTES ====================
 
 /**
+ * GET /api/admin/withdrawals/statistics
+ * Get statistics for all withdrawal requests
+ */
+router.get('/withdrawals/statistics', adminController.getWithdrawalStatistics);
+
+/**
  * GET /api/admin/withdrawals/pending
  * Get all pending withdrawal requests
  */
@@ -121,19 +127,34 @@ router.put('/withdrawals/bulk-process', [
   body('decline_reason').optional().isLength({ max: 500 })
 ], adminController.bulkProcessWithdrawals);
 
-// ==================== VOXCOIN MANAGEMENT ROUTES ====================
+// ==================== KASHCOIN MANAGEMENT ROUTES ====================
 
 /**
- * GET /api/admin/voxcoin/eligible-users
- * Get users eligible for VOXcoin withdrawal (above threshold)
+ * GET /api/admin/kashcoin/statistics
+ * Get detailed analytics and statistics for KASHcoin
  */
-router.get('/voxcoin/eligible-users', [
+router.get('/kashcoin/statistics', adminController.getKashcoinStatistics);
+
+/**
+ * GET /api/admin/kashcoin/eligible-users
+ * Get users eligible for KASHcoin withdrawal (above threshold)
+ */
+router.get('/kashcoin/eligible-users', [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 100 }),
   query('search').optional().isLength({ max: 100 }),
-  query('sort_by').optional().isIn(['voxcoin_balance', 'created_at', 'username']),
+  query('sort_by').optional().isIn(['kashcoin_balance', 'created_at', 'username']),
   query('sort_order').optional().isIn(['asc', 'desc'])
-], adminController.getVoxcoinEligibleUsers);
+], adminController.getKashcoinEligibleUsers);
+
+/**
+ * POST /api/admin/kashcoin/process-payments
+ * Process KASHcoin payments for multiple users (deduct threshold)
+ */
+router.post('/kashcoin/process-payments', [
+  body('user_ids').isArray({ min: 1, max: 100 }),
+  body('user_ids.*').isUUID()
+], adminController.processKashcoinPayments);
 
 // ==================== SETTINGS MANAGEMENT ROUTES ====================
 

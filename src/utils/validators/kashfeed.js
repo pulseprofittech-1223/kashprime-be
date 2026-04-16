@@ -2,7 +2,7 @@
 
 const { body, param,   } = require('express-validator');
 
-const voxfeedValidators = {
+const kashfeedValidators = {
   createPost: [
     body('title')
       .trim()
@@ -136,4 +136,4 @@ const voxfeedValidators = {
   ]
 };
 
-module.exports = voxfeedValidators;
+module.exports = kashfeedValidators;

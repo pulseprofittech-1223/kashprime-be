@@ -3,3 +3,5 @@
 .DS_Store
 /scripts
 tests/integration/README.md
+tests/check_db.js
+tests/check_db.js

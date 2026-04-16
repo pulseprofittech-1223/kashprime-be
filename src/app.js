@@ -8,13 +8,13 @@ const authRoutes = require("./routes/auth.routes");
 const userRoutes = require("./routes/user.routes");
 const investmentsRoutes = require("./routes/investment.routes");
 // const socialRoutes = require("./routes/social.routes");
-// const voxfeedRoutes = require("./routes/voxfeed.routes");
+// const kashfeedRoutes = require("./routes/kashfeed.routes");
 // const jobsRoutes = require("./routes/jobs.routes");
 const adminRoutes = require("./routes/admin.routes");
 const withdrawalRoutes = require("./routes/withdrawal.routes");
 // const liveButtonRoutes = require("./routes/liveButton.routes");
 // const transferRoutes = require("./routes/transfer.routes");
-const voxskitRoutes = require("./routes/voxskit.routes");
+const kashskitRoutes = require("./routes/kashskit.routes");
 // const luckyJetRoutes = require("./routes/luckyJet.routes");
 // const raffleRoutes = require("./routes/raffle.routes");
 const minesRoutes = require("./routes/mines.routes");
@@ -89,10 +89,8 @@ app.use(
     ],
     optionsSuccessStatus: 200,
   })
-);
+);      
 
-// Explicitly handle preflight requests for all routes
-app.options("*", cors());
         
 // Security middleware
 app.use(helmet({
@@ -124,7 +122,7 @@ app.use("/uploads", express.static("uploads"));
 app.get("/health", (req, res) => {
   res.status(200).json({
     status: "success",
-    message: "LUMIVOX API is running",
+    message: "LUMIKASH API is running",
     timestamp: new Date().toISOString(),
   });
 });
@@ -134,7 +132,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/investments", investmentsRoutes);
 // app.use("/api/social", socialRoutes);
-// app.use("/api/voxfeed", voxfeedRoutes);
+// app.use("/api/kashfeed", kashfeedRoutes);
 // app.use("/api/jobs", jobsRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/hub88", hub88Routes);
@@ -149,7 +147,7 @@ app.use('/api/keno',         kenoRoutes);
 app.use("/api/withdrawal", withdrawalRoutes);
 // app.use("/api/live-button", liveButtonRoutes);
 // app.use("/api/transfer", transferRoutes);
-app.use("/api/voxskit", voxskitRoutes);
+app.use("/api/kashskit", kashskitRoutes);
 // app.use("/api/raffle", raffleRoutes);
 // app.use("/api/lucky-jet", luckyJetRoutes);
 app.use("/api/mines", minesRoutes);
@@ -158,6 +156,7 @@ app.use("/api/games", gamesRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/sponsored-posts', sponsoredPostRoutes);
 app.use('/api/kash-ads', kashAdsRoutes);
+app.use('/api/codes', require('./routes/codes.routes'));
 
 // 404 handler - Express v5 compatible
 app.use((req, res, next) => {

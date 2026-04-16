@@ -384,13 +384,13 @@ describe('Admin Routes Integration Tests', () => {
     });
   });
 
-  // ==================== VOXCOIN/COINS MANAGEMENT ROUTES ====================
+  // ==================== KASHCOIN/COINS MANAGEMENT ROUTES ====================
   
   describe('Coins Management', () => {
     
-    test('GET /voxcoin/eligible-users - should return users above threshold', async () => {
+    test('GET /kashcoin/eligible-users - should return users above threshold', async () => {
       const response = await request(app)
-        .get(`${BASE_URL}/voxcoin/eligible-users`)
+        .get(`${BASE_URL}/kashcoin/eligible-users`)
         .set(authHeader())
         .query({ page: 1, limit: 20 });
       
@@ -409,9 +409,9 @@ describe('Admin Routes Integration Tests', () => {
       }
     });
 
-    test('GET /voxcoin/eligible-users - should search eligible users', async () => {
+    test('GET /kashcoin/eligible-users - should search eligible users', async () => {
       const response = await request(app)
-        .get(`${BASE_URL}/voxcoin/eligible-users`)
+        .get(`${BASE_URL}/kashcoin/eligible-users`)
         .set(authHeader())
         .query({ search: 'test', limit: 10 });
       

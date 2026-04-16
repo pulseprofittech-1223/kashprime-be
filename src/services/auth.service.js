@@ -6,7 +6,7 @@ const {
   comparePassword,
   encryptPassword,
   decryptPassword
-} = require('../utils/helpers/auth');
+} = require('../utils/helpers');
 const MESSAGES = require('../utils/constants/messages');
 const { sendWelcomeEmail, sendPasswordResetOTP, sendPasswordChangeConfirmation } = require('./email/sendEmail');
 

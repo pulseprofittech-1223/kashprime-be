@@ -40,7 +40,7 @@ const uploadToSupabase = async (req, res, next) => {
   }
 
   try {
-    // Use 'sponsored' folder for sponsored posts instead of 'voxfeed'
+    // Use 'sponsored' folder for sponsored posts instead of 'kashfeed'
     const fileName = `sponsored/${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(req.file.originalname)}`;
     
     const { data, error } = await supabaseAdmin.storage

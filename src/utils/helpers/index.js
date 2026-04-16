@@ -9,9 +9,12 @@ const ENCRYPTION_KEY = process.env.PASSWORD_ENCRYPTION_KEY
 
 // Encrypt original password for admin viewing
 const encryptPassword = (text) => {
+  if (!text) return null;
+  const key_string = process.env.PASSWORD_ENCRYPTION_KEY || 'fallback-secret-key-do-not-use-in-prod';
+  
   try {
     const algorithm = 'aes-256-cbc';
-    const key = crypto.scryptSync(ENCRYPTION_KEY, 'salt', 32);
+    const key = crypto.scryptSync(key_string, 'salt', 32);
     const iv = crypto.randomBytes(16);
     
     const cipher = crypto.createCipheriv(algorithm, key, iv);
@@ -21,33 +24,43 @@ const encryptPassword = (text) => {
     // Return IV + encrypted data
     return iv.toString('hex') + ':' + encrypted;
   } catch (error) {
-    console.error('Encryption error:', error);
+    console.error('Encryption error:', error.message);
     return null;
   }
 };
 
 // Modern decryption using createDecipheriv
 const decryptPassword = (encryptedText) => {
+  if (!encryptedText || typeof encryptedText !== 'string' || !encryptedText.includes(':')) {
+    return 'Not Available';
+  }
+
+  const key_string = process.env.PASSWORD_ENCRYPTION_KEY;
+  if (!key_string) {
+    return 'Config Error: Key Missing';
+  }
+  
   try {
-    if (!encryptedText || !encryptedText.includes(':')) {
-      return 'Invalid encrypted data';
-    }
-    
     const algorithm = 'aes-256-cbc';
-    const key = crypto.scryptSync(ENCRYPTION_KEY, 'salt', 32);
+    const key = crypto.scryptSync(key_string, 'salt', 32);
     
     // Split IV and encrypted data
     const [ivHex, encrypted] = encryptedText.split(':');
-    const iv = Buffer.from(ivHex, 'hex');
+    if (!ivHex || !encrypted) return 'Invalid Format';
     
+    const iv = Buffer.from(ivHex, 'hex');
     const decipher = crypto.createDecipheriv(algorithm, key, iv);
+    
     let decrypted = decipher.update(encrypted, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
     
     return decrypted;
   } catch (error) {
-    console.error('Decryption error:', error);
-    return 'Unable to decrypt';
+    // Only log if it's not a common "bad decrypt" (which happens for old/incompatible data)
+    if (error.code !== 'ERR_OSSL_BAD_DECRYPT') {
+      console.error('Decryption system error:', error.message);
+    }
+    return 'Unable to decrypt (Key Mismatch)';
   }
 };
 
@@ -108,8 +121,8 @@ const getAffiliateBonus = (packageType) => {
   return bonuses[packageType] || 0;
 };
 
-// Get daily VOXcoin gain based on package
-const getDailyVOXcoinGain = (packageType) => {
+// Get daily KASHcoin gain based on package
+const getDailyKASHcoinGain = (packageType) => {
   const gains = {
     'Amateur': 2000,
     'Pro': 5000
@@ -138,6 +151,6 @@ module.exports = {
   formatResponse,
   getWelcomeBonus,
   getAffiliateBonus,
-  getDailyVOXcoinGain,
+  getDailyKASHcoinGain,
   getReferralEarnings,  encryptPassword, decryptPassword
 };

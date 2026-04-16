@@ -1,7 +1,7 @@
 {
-  "name": "lumivox-backend",
+  "name": "kashprime-backend",
   "version": "1.0.0",
-  "description": "LUMIVOX Platform Backend API - Multi-feature platform combining affiliate marketing, gaming, social media monetization, and investment opportunities",
+  "description": "KASHPRIME Platform Backend API - Multi-feature platform combining affiliate marketing, gaming, social media monetization, and investment opportunities",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -12,7 +12,7 @@
     "format": "prettier --write src/**/*.js"
   },
   "keywords": [
-    "lumivox",
+    "kashprime",
     "api",
     "backend",
     "affiliate",
@@ -23,7 +23,7 @@
     "express",
     "supabase"
   ],
-  "author": "LUMIVOX Team",
+  "author": "KASHPRIME Team",
   "license": "ISC",
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

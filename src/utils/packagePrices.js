@@ -25,17 +25,17 @@ const getPackageDetails = (packageType) => {
 
   const benefits = {
     'Amateur': {
-      voxcoinWelcomeBonus: 8500,
+      kashcoinWelcomeBonus: 8500,
       affiliateBonus: 7400,
-      dailyVoxcoinGain: 2000,
+      dailyKashcoinGain: 2000,
       referralEarnings: { first: 200, second: 100 },
       socialMediaStreaks: 1,
       videoWatching: 1
     },
     'Pro': {
-      voxcoinWelcomeBonus: 13000,
+      kashcoinWelcomeBonus: 13000,
       affiliateBonus: 12000,
-      dailyVoxcoinGain: 5000,
+      dailyKashcoinGain: 5000,
       referralEarnings: { first: 400, second: 100 },
       socialMediaStreaks: 2,
       videoWatching: 2

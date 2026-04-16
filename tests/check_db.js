@@ -24,10 +24,10 @@ async function check() {
     users.forEach(u => console.log(`- ${u.email} (${u.role})`));
     
     const admin1 = users.find(u => u.email === 'admin@kashprime.com');
-    const admin2 = users.find(u => u.email === 'admin@lumivox.com');
+    const admin2 = users.find(u => u.email === 'admin@lumikash.com');
     
     if (admin1) console.log('admin@kashprime.com found.');
-    if (admin2) console.log('admin@lumivox.com found.');
+    if (admin2) console.log('admin@lumikash.com found.');
   }
 }
 

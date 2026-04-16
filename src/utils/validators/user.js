@@ -24,7 +24,7 @@ const validateTransactionQuery = [
     .withMessage("Invalid transaction type"),
   query("earning_type")
     .optional()
-    .isIn(["growth_bonus", "tier1", "tier2", "manager", "voxcoin"])
+    .isIn(["growth_bonus", "tier1", "tier2", "manager", "kashcoin"])
     .withMessage("Invalid earning type"),
 ];
 

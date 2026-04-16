@@ -11,7 +11,7 @@ welcomeEmail: (user, context) => {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome to LUMIVOX</title>
+    <title>Welcome to LUMIKASH</title>
     <style>
       body {
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -59,7 +59,7 @@ welcomeEmail: (user, context) => {
     <div style="padding: 20px 0;">
       <div class="container">
         <div class="header">
-          <h1>Welcome to LUMIVOX!</h1>
+          <h1>Welcome to LUMIKASH!</h1>
           <p style="margin: 0;">Your account has been successfully created</p>
         </div>
 
@@ -74,12 +74,12 @@ welcomeEmail: (user, context) => {
           </div>
 
           <p style="margin-top: 25px;">If you need any assistance, feel free to contact our support team at any time.</p>
-          <p>Welcome aboard,<br><strong>The LUMIVOX Team</strong></p>
+          <p>Welcome aboard,<br><strong>The LUMIKASH Team</strong></p>
         </div>
 
         <div class="footer">
-          <p><strong>LUMIVOX</strong> — Secure, Smart, and Simple</p>
-          <p>© ${currentYear} LUMIVOX. All rights reserved.</p>
+          <p><strong>LUMIKASH</strong> — Secure, Smart, and Simple</p>
+          <p>© ${currentYear} LUMIKASH. All rights reserved.</p>
         </div>
       </div>
     </div>
@@ -100,7 +100,7 @@ welcomeEmail: (user, context) => {
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Password Reset - LUMIVOX</title>
+        <title>Password Reset - LUMIKASH</title>
         <style>
           body { 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
@@ -185,14 +185,14 @@ welcomeEmail: (user, context) => {
       <body>
         <div class="container">
           <div class="header">
-            <h1>LUMIVOX</h1>
+            <h1>LUMIKASH</h1>
             <h2>Password Reset Request</h2>
           </div>
           
           <div class="content">
             <p>Hello <strong>${full_name}</strong>,</p>
             
-            <p>We received a request to reset your password for your LUMIVOX account. Use the verification code below to proceed:</p>
+            <p>We received a request to reset your password for your LUMIKASH account. Use the verification code below to proceed:</p>
             
             <div class="otp-box">
               <p><strong>Your Verification Code:</strong></p>
@@ -204,7 +204,7 @@ welcomeEmail: (user, context) => {
               <h3>Security Notice:</h3>
               <ul style="margin-bottom: 0;">
                 <li><strong>Never share this code</strong> with anyone</li>
-                <li>LUMIVOX will <strong>never ask for this code</strong> via phone or email</li>
+                <li>LUMIKASH will <strong>never ask for this code</strong> via phone or email</li>
                 <li>If you didn't request this reset, please ignore this email</li>
                 <li>This code can only be used <strong>once</strong> and expires in 10 minutes</li>
               </ul>
@@ -212,12 +212,12 @@ welcomeEmail: (user, context) => {
             
             <p>If you're having trouble, contact our support team for assistance.</p>
             
-            <p>Best regards,<br><strong>The LUMIVOX Team</strong></p>
+            <p>Best regards,<br><strong>The LUMIKASH Team</strong></p>
           </div>
           
           <div class="footer">
             <p>This email was sent to <strong>${email}</strong></p>
-            <p>© ${currentYear} LUMIVOX. All rights reserved.</p>
+            <p>© ${currentYear} LUMIKASH. All rights reserved.</p>
           </div>
         </div>
       </body>
@@ -237,7 +237,7 @@ welcomeEmail: (user, context) => {
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Password Changed - LUMIVOX</title>
+        <title>Password Changed - LUMIKASH</title>
         <style>
           body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f4f4; }
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
@@ -256,7 +256,7 @@ welcomeEmail: (user, context) => {
           <div class="content">
             <p>Hello <strong>${full_name}</strong>,</p>
             
-            <p>This email confirms that your LUMIVOX account password was successfully changed on <strong>${changeTime}</strong>.</p>
+            <p>This email confirms that your LUMIKASH account password was successfully changed on <strong>${changeTime}</strong>.</p>
             
             <div class="alert">
               <p><strong>Security Notice:</strong> If you did not make this change, please contact our support team immediately.</p>
@@ -270,12 +270,12 @@ welcomeEmail: (user, context) => {
               <li>Logging out from shared devices</li>
             </ul>
             
-            <p>Best regards,<br><strong>The LUMIVOX Team</strong></p>
+            <p>Best regards,<br><strong>The LUMIKASH Team</strong></p>
           </div>
           
           <div class="footer">
             <p>This email was sent to <strong>${email}</strong></p>
-            <p>© ${currentYear} LUMIVOX. All rights reserved.</p>
+            <p>© ${currentYear} LUMIKASH. All rights reserved.</p>
           </div>
         </div>
       </body>

@@ -1,6 +1,6 @@
 const { supabaseAdmin } = require("../services/supabase.service");
 const { validationResult } = require("express-validator");
-const messages = require("../utils/constants/voxfeed");
+const messages = require("../utils/constants/kashfeed");
 
 // Get daily status for sponsored posts
 const getDailyStatus = async (req, res) => {
@@ -468,7 +468,7 @@ const deletePost = async (req, res) => {
     if (post?.featured_image && post.featured_image.includes("supabase")) {
       const imagePath = post.featured_image.split("/").pop();
       await supabaseAdmin.storage
-        .from("lumivox")
+        .from("lumikash")
         .remove([`sponsored/${imagePath}`]);
     }
 
@@ -813,6 +813,64 @@ const canEngagePost = async (req, res) => {
   }
 };
 
+// Toggle post status (Admin only)
+const togglePostStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_published } = req.body;
+    const adminId = req.user.id;
+
+    if (typeof is_published !== 'boolean') {
+      return res.status(400).json({
+        status: "error",
+        message: "is_published must be a boolean",
+      });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("sponsored_posts")
+      .update({
+        is_published,
+        status: is_published ? "published" : "draft",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({
+        status: "error",
+        message: "Sponsored post not found",
+      });
+    }
+
+    await supabaseAdmin.from("admin_activities").insert([
+      {
+        admin_id: adminId,
+        activity_type: "sponsored_post_toggle",
+        description: `${is_published ? "Published" : "Unpublished"} sponsored post: ${data.title}`,
+        metadata: {
+          post_id: id,
+          is_published,
+        },
+      },
+    ]);
+
+    res.json({
+      status: "success",
+      message: `Sponsored post ${is_published ? "published" : "drafted"} successfully`,
+      data: { post: data },
+    });
+  } catch (error) {
+    console.error("Toggle sponsored post error:", error);
+    res.status(500).json({
+      status: "error",
+      message: messages.ERROR.SERVER_ERROR,
+    });
+  }
+};
+
 module.exports = {
   getDailyStatus,
   createPost,
@@ -822,5 +880,6 @@ module.exports = {
   updatePost,
   deletePost,
   engagePost,
-  canEngagePost
+  canEngagePost,
+  togglePostStatus
 };

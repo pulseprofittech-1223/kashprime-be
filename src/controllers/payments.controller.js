@@ -330,6 +330,72 @@ class PaymentController {
     }
   }
 
+  static async redeemCode(req, res) {
+    try {
+      const { code, purpose } = req.body;
+      const userId = req.user.id;
+
+      // 1. Fetch code
+      const { data: depositCode, error: codeError } = await supabaseAdmin
+        .from('deposit_codes')
+        .select('*')
+        .eq('code', code.toUpperCase())
+        .single();
+        
+      if (codeError || !depositCode) {
+        return res.status(400).json({ success: false, message: 'Invalid or non-existent deposit code' });
+      }
+
+      // 2. Validate code status
+      if (depositCode.status !== 'active') {
+        return res.status(400).json({ success: false, message: 'Deposit code has already been used' });
+      }
+
+      const amount = parseFloat(depositCode.amount);
+      const reference = `LV_CODE_${code.substring(0,6)}_${Date.now()}`;
+      
+      // 3. Mark code as used immediately to prevent double spending
+      const { error: updateError } = await supabaseAdmin
+        .from('deposit_codes')
+        .update({ status: 'used', used_by: userId, used_at: new Date().toISOString() })
+        .eq('id', depositCode.id)
+        .eq('status', 'active'); // Concurrency lock mechanism
+
+      if (updateError) {
+        return res.status(500).json({ success: false, message: 'Error locking code for redemption', error: updateError.message });
+      }
+
+      let responseData = {};
+
+      // 4. Process based on purpose (We only support gaming & upgrades for codes natively for now)
+      if (purpose === 'gaming') {
+        responseData = await PaymentController.processGamingDeposit(userId, amount, reference, { method: 'code_redemption', code_id: depositCode.id });
+      } else if (purpose === 'investment') {
+         // Not fully supported natively via code unless plan passed, but mock it securely
+        return res.status(400).json({ success: false, message: 'Investment via code is not directly supported without plan context.' });
+      } else if (purpose === 'upgrade') {
+        responseData = await PaymentController.processUpgrade(userId, amount, reference, { method: 'code_redemption', code_id: depositCode.id });
+      } else {
+        // Assume default gaming funding if unknown
+        responseData = await PaymentController.processGamingDeposit(userId, amount, reference, { method: 'code_redemption', code_id: depositCode.id });
+      }
+
+      res.json({
+        success: true,
+        message: `Code redeemed successfully! ₦${amount.toLocaleString()} added to your account.`,
+        data: {
+          ...responseData,
+          amount,
+          transaction_reference: reference
+        }
+      });
+      
+    } catch (error) {
+      console.error('Code redemption error:', error);
+      res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+    }
+  }
+
   // Process gaming deposit
   static async processGamingDeposit(userId, paidAmount, reference, verificationData) {
     const { data: currentWallet } = await supabaseAdmin

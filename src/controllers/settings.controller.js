@@ -1,4 +1,4 @@
-const { supabaseAdmin } = require('./supabase.service');
+const { supabaseAdmin } = require('../services/supabase.service');
 
 // Cache for settings to avoid frequent database queries
 let settingsCache = {};

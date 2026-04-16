@@ -4,7 +4,7 @@ const multer = require('multer');
 const { body, query, param } = require('express-validator');
 const router = express.Router();
 
-const voxskitController = require('../controllers/voxskit.controller');
+const kashskitController = require('../controllers/kashskit.controller');
 const { authMiddleware, requireAdmin } = require('../middleware/auth.middleware');
 
 // Configure multer for video uploads
@@ -38,36 +38,42 @@ const uploadLimiter = rateLimit({
 // ==================== USER ROUTES ====================
 
 /**
- * GET /api/voxskit/videos
+ * GET /api/kashskit/videos
  * Get available videos for user to watch
  */
 router.get('/videos', authMiddleware, [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 50 })
-], voxskitController.getAvailableVideos);
+], kashskitController.getAvailableVideos);
 
 /**
- * POST /api/voxskit/claim
+ * POST /api/kashskit/claim
  * Claim reward after watching video
  */
 router.post('/claim', authMiddleware,  [
   body('video_id').isUUID().withMessage('Valid video ID is required')
-], voxskitController.claimVideoReward);
+], kashskitController.claimVideoReward);
 
 /**
- * GET /api/voxskit/my-claims
+ * GET /api/kashskit/my-claims
  * Get user's claim history
  */
 router.get('/my-claims', authMiddleware, [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 50 })
-], voxskitController.getUserClaimHistory);
+], kashskitController.getUserClaimHistory);
+
+/**
+ * GET /api/kashskit/daily-status
+ * Get user's daily claim status and limits
+ */
+router.get('/daily-status', authMiddleware, kashskitController.getDailyStatus);
 
 // ==================== ADMIN ROUTES ====================
 
 /**
- * POST /api/voxskit/admin/upload
- * Upload new VoxSkit video
+ * POST /api/kashskit/admin/upload
+ * Upload new KashSkit video
  */
 router.post('/admin/upload', 
   authMiddleware, 
@@ -86,11 +92,11 @@ router.post('/admin/upload',
       .isURL()
       .withMessage('External link must be a valid URL')
   ], 
-  voxskitController.uploadVideo
+  kashskitController.uploadVideo
 );
 
 /**
- * GET /api/voxskit/admin/videos
+ * GET /api/kashskit/admin/videos
  * Get all videos for admin management
  */
 router.get('/admin/videos', authMiddleware, requireAdmin, [
@@ -98,23 +104,31 @@ router.get('/admin/videos', authMiddleware, requireAdmin, [
   query('limit').optional().isInt({ min: 1, max: 100 }),
   query('search').optional().isLength({ max: 100 }),
   query('is_active').optional().isIn([true, false])
-], voxskitController.getAllVideos);
+], kashskitController.getAllVideos);
 
 /**
- * GET /api/voxskit/admin/videos/:videoId
+ * GET /api/kashskit/admin/videos/:videoId
  * Get video details with claim statistics
  */
 router.get('/admin/videos/:videoId', authMiddleware, requireAdmin, [
   param('videoId').isUUID()
-], voxskitController.getVideoDetails);
+], kashskitController.getVideoDetails);
 
 /**
- * DELETE /api/voxskit/admin/videos/:videoId
+ * PUT /api/kashskit/admin/videos/:videoId/status
+ * Toggle video active/inactive
+ */
+router.put('/admin/videos/:videoId/status', authMiddleware, requireAdmin, [
+  param('videoId').isUUID()
+], kashskitController.toggleVideoStatus);
+
+/**
+ * DELETE /api/kashskit/admin/videos/:videoId
  * Delete video
  */
 router.delete('/admin/videos/:videoId', authMiddleware, requireAdmin, [
   param('videoId').isUUID()
-], voxskitController.deleteVideo);
+], kashskitController.deleteVideo);
 
  
 

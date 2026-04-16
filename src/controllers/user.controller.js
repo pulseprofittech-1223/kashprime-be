@@ -1,6 +1,7 @@
 const { validationResult } = require('express-validator');
 const { supabaseAdmin } = require('../services/supabase.service');
 const { formatResponse } = require('../utils/helpers');
+const { getSettings } = require('./settings.controller');
 const MESSAGES = require('../utils/constants/messages');
 const bcrypt = require('bcryptjs');
 
@@ -91,6 +92,20 @@ const getDashboard = async (req, res) => {
     delete user.reset_otp;
     delete user.reset_otp_expires_at;
 
+    const { data: platformSettings } = await supabaseAdmin
+      .from('platform_settings')
+      .select('setting_key, setting_value')
+      .in('setting_key', ['kashskit_enabled', 'sponsored_enabled', 'kash_ads_enabled']);
+
+    const settingsObj = (platformSettings || []).reduce((acc, curr) => {
+      acc[curr.setting_key] = curr.setting_value === 'true' || curr.setting_value === true;
+      return acc;
+    }, {
+      kashskit_enabled: true,
+      sponsored_enabled: true,
+      kash_ads_enabled: true
+    });
+
     const dashboardData = {
       user: {
         id: user.id,
@@ -98,6 +113,7 @@ const getDashboard = async (req, res) => {
         full_name: user.full_name,
         user_tier: user.user_tier,
         role: user.role,
+        email: user.email,
         referral_code: user.referral_code,
         profile_picture: user.profile_picture,
         last_login_at: user.last_login_at
@@ -117,7 +133,8 @@ const getDashboard = async (req, res) => {
         active_referrals: activeReferrals,
         total_referrals: (pendingReferrals + activeReferrals)
       },
-      recent_transactions: enhancedTransactions
+      recent_transactions: enhancedTransactions,
+      platform_settings: settingsObj
     };
 
     res.status(200).json(
@@ -633,6 +650,64 @@ const applyForMerchant = async (req, res) => {
   }
 };
 
+// Get list of vendors for users to buy codes
+const getVendors = async (req, res) => {
+  try {
+    const { data: vendors, error: vendorsError } = await supabaseAdmin
+      .from('users')
+      .select('id, full_name, username, phone_number, role, profile_picture')
+      .in('role', ['merchant', 'vendor', 'super_vendor', 'manager']);
+
+    if (vendorsError) throw vendorsError;
+
+    // Get counts of active deposit codes
+    const { data: codeCounts, error: countError } = await supabaseAdmin
+      .from('deposit_codes')
+      .select('merchant_id')
+      .eq('status', 'active');
+
+    if (countError) throw countError;
+
+    // Calculate available count for each vendor
+    const vendorsWithStats = vendors.map(v => ({
+      ...v,
+      availableCount: codeCounts.filter(c => c.merchant_id === v.id).length
+    }));
+
+    // Grouping and Randomizing
+    // Priority: Vendors with codes > Vendors without codes
+    const withCodes = vendorsWithStats.filter(v => v.availableCount > 0).sort(() => Math.random() - 0.5);
+    const withoutCodes = vendorsWithStats.filter(v => v.availableCount === 0).sort(() => Math.random() - 0.5);
+
+    const merged = [...withCodes, ...withoutCodes];
+
+    res.status(200).json(formatResponse('success', 'Vendors list fetched', merged));
+  } catch (error) {
+    console.error('getVendors error:', error);
+    res.status(500).json(formatResponse('error', 'Failed to fetch merchants list'));
+  }
+};
+
+// Get public platform settings
+const getPublicSettings = async (req, res) => {
+  try {
+    const settings = await getSettings();
+    const publicSettings = {
+      min_deposit: parseFloat(settings.min_deposit_amount || settings.min_deposit) || 100,
+      min_withdrawal_games: parseFloat(settings.min_withdrawal_games_amount || settings.min_withdrawal_games) || 5000,
+      min_withdrawal_referral: parseFloat(settings.min_withdrawal_referral_amount || settings.min_withdrawal_referral) || 2000,
+      min_withdrawal_coins: parseFloat(settings.coins_withdrawal_threshold_amount || settings.min_withdrawal_coins_amount) || 50000,
+      site_name: settings.site_name || 'KashPrime',
+      contact_email: settings.contact_email || 'support@kashprime.com',
+    };
+
+    res.status(200).json(formatResponse('success', 'Public settings fetched', publicSettings));
+  } catch (error) {
+    console.error('getPublicSettings error:', error);
+    res.status(500).json(formatResponse('error', 'Failed to fetch platform settings'));
+  }
+};
+
 module.exports = {
   getDashboard,
   updateProfile,
@@ -640,5 +715,7 @@ module.exports = {
   getWalletDetails,
   updateWallet,
   getActivitySummary,
-  applyForMerchant
+  applyForMerchant,
+  getVendors,
+  getPublicSettings
 };

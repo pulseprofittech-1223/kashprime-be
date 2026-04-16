@@ -19,11 +19,31 @@ const getKashAdsSettings = async () => {
     settingsMap[s.setting_key] = s.setting_value;
   });
 
+  // Handle directLink which can now be an array
+  let directLinks = settingsMap.kash_ads_direct_link || [];
+  if (typeof directLinks === 'string') {
+    try {
+      // Try parsing if it's stored as a JSON string
+      const parsed = JSON.parse(directLinks);
+      directLinks = Array.isArray(parsed) ? parsed : [parsed];
+    } catch (e) {
+      // If not JSON, it's a single legacy link
+      directLinks = [directLinks];
+    }
+  } else if (!Array.isArray(directLinks)) {
+    directLinks = [directLinks];
+  }
+
+  // Filter out any empty strings/nulls and clean quotes
+  directLinks = directLinks
+    .filter(l => l && typeof l === 'string')
+    .map(l => l.replace(/^"|"$/g, '').replace(/^'|'$/g, ''));
+
   return {
     rewardAmount: parseInt(settingsMap.kash_ads_reward_amount) || 500,
     clicksRequired: parseInt(settingsMap.kash_ads_clicks_required) || 5,
     cooldownHours: parseInt(settingsMap.kash_ads_cooldown_hours) || 6,
-    directLink: settingsMap.kash_ads_direct_link || null
+    directLinks: directLinks
   };
 };
 
@@ -31,7 +51,7 @@ const getKashAdsStatus = async (req, res) => {
   try {
     const userId = req.user.id;
     const settings = await getKashAdsSettings();
-    const { rewardAmount, clicksRequired, cooldownHours, directLink } = settings;
+    const { rewardAmount, clicksRequired, cooldownHours, directLinks } = settings;
 
     let { data: kashAds, error } = await supabaseAdmin
       .from('kash_ads')
@@ -47,6 +67,13 @@ const getKashAdsStatus = async (req, res) => {
     const isOnCooldown = cooldownEnd && now < cooldownEnd;
     
     let currentClicks = kashAds.clicks_count;
+    
+    // Determine which link to show based on total progress to ensure rotation
+    let directLink = null;
+    if (directLinks.length > 0) {
+      const totalProgress = (kashAds.total_rewards_claimed * clicksRequired) + currentClicks;
+      directLink = directLinks[totalProgress % directLinks.length];
+    }
 
     let timeRemaining = null;
     if (isOnCooldown) {
@@ -65,10 +92,11 @@ const getKashAdsStatus = async (req, res) => {
         reward_amount: rewardAmount,
         cooldown_hours: cooldownHours,
         direct_link: directLink,
+        available_links_count: directLinks.length,
         is_on_cooldown: isOnCooldown,
         cooldown_ends_at: cooldownEnd ? cooldownEnd.toISOString() : null,
         time_remaining: timeRemaining,
-        can_click: !isOnCooldown && currentClicks < clicksRequired,
+        can_click: !isOnCooldown && currentClicks < clicksRequired && !!directLink,
         can_claim: !isOnCooldown && currentClicks >= clicksRequired,
         total_rewards_claimed: kashAds.total_rewards_claimed,
         total_coins_earned: parseFloat(kashAds.total_coins_earned || 0)
@@ -235,7 +263,7 @@ const claimKashAdsReward = async (req, res) => {
     const nextAvailableAt = new Date(now.getTime() + (cooldownHours * 60 * 60 * 1000));
 
     res.status(200).json(
-      formatResponse('success', `🎉 You earned ${rewardAmount} VoxCoins!`, {
+      formatResponse('success', `🎉 You earned ${rewardAmount} KashCoins!`, {
         reward_amount: rewardAmount,
         new_coins_balance: newBalance,
         next_available_at: nextAvailableAt.toISOString(),

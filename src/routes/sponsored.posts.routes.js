@@ -3,7 +3,7 @@ const router = express.Router();
 const sponsoredController = require('../controllers/sponsored.posts.controller');
 const { authMiddleware, requireAdmin } = require('../middleware/auth.middleware');
 const uploadMiddleware = require('../middleware/upload.middleware');
-const { sanitizeContent } = require('../middleware/voxfeed.middleware');
+const { sanitizeContent } = require('../middleware/kashfeed.middleware');
 const sponsoredValidators = require('../utils/validators/sponsored.posts');
 const rateLimit = require('express-rate-limit');
 
@@ -89,6 +89,18 @@ router.delete(
   sponsoredController.deletePost
 );
 
+/**
+ * @route PUT /api/sponsored-posts/admin/:id/status
+ * @desc Toggle post status (Admin only)
+ * @access Private (Admin only)
+ */
+router.put(
+  '/admin/:id/status',
+  authMiddleware,
+  requireAdmin,
+  sponsoredController.togglePostStatus
+);
+
 // ==================== USER STATIC ROUTES (BEFORE dynamic :postId) ====================
 
 /**
@@ -128,7 +140,7 @@ router.get(
 
 /**
  * @route POST /api/sponsored-posts/:postId/engage
- * @desc Engage with sponsored post to earn VOXcoin
+ * @desc Engage with sponsored post to earn KASHcoin
  * @access Private (Authenticated users)
  */
 router.post(

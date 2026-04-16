@@ -1,7 +1,7 @@
  
 
 const { supabaseAdmin } = require('../services/supabase.service');
-const messages = require('../utils/constants/voxfeed');
+const messages = require('../utils/constants/kashfeed');
 
 // Middleware to check if user can create posts
 const checkPostCreationLimits = async (req, res, next) => {  
@@ -14,7 +14,7 @@ const checkPostCreationLimits = async (req, res, next) => {
     today.setHours(0, 0, 0, 0);
     
     const { count, error } = await supabaseAdmin
-      .from('voxfeed_posts')
+      .from('kashfeed_posts')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
       .gte('created_at', today.toISOString());
@@ -67,7 +67,7 @@ const checkCommentLimits = async (req, res, next) => {
     today.setHours(0, 0, 0, 0);
     
     const { count, error } = await supabaseAdmin
-      .from('voxfeed_comments')
+      .from('kashfeed_comments')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
       .gte('created_at', today.toISOString());
@@ -116,7 +116,7 @@ const validatePostOwnership = async (req, res, next) => {
     const userId = req.user.id;
     
     const { data: post, error } = await supabaseAdmin
-      .from('voxfeed_posts')
+      .from('kashfeed_posts')
       .select('user_id')
       .eq('id', id)
       .single();
@@ -152,7 +152,7 @@ const validateCommentOwnership = async (req, res, next) => {
     const userId = req.user.id;
     
     const { data: comment, error } = await supabaseAdmin
-      .from('voxfeed_comments')
+      .from('kashfeed_comments')
       .select('user_id')
       .eq('id', commentId)
       .single();
@@ -189,7 +189,7 @@ const validatePublishedPost = async (req, res, next) => {
     const field = slug ? 'slug' : 'id';
     
     const { data: post, error } = await supabaseAdmin
-      .from('voxfeed_posts')
+      .from('kashfeed_posts')
       .select('id, status, is_published')
       .eq(field, identifier)
       .single();

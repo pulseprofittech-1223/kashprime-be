@@ -293,7 +293,7 @@
                 <h3>✏️ Update Setting</h3>
                 <div class="form-group">
                     <label for="settingKey">Setting Key:</label>
-                    <input type="text" id="settingKey" placeholder="e.g., voxcoin_withdrawal_threshold">
+                    <input type="text" id="settingKey" placeholder="e.g., kashcoin_withdrawal_threshold">
                 </div>
                 <div class="form-group">
                     <label for="settingValue">Setting Value:</label>
@@ -406,7 +406,7 @@
 
         function parseSettingsData() {
             // Parse the SQL INSERT data from the provided document
-            const sqlData = `INSERT INTO "public"."platform_settings" ("id", "setting_key", "setting_value", "description", "updated_by", "created_at", "updated_at") VALUES ('05f71457-94dc-49ae-9aa7-976987ddb4cc', 'package_rewards_amateur_welcome_bonus', 800', 'Welcome bonus for Amateur package users', null, '2025-10-06 23:47:09.085843+00', '2025-10-18 13:31:07.415649+00'), ('07af501e-3a01-4e19-9412-a2ac5d0e8384', 'voxfeed_enabled', tru', 'Enable/disable VOXFeed blogging platform', null, '2025-09-13 09:32:59.425187+00', '2025-09-13 09:32:59.425187+00'), ('0d78dd6a-97c6-41df-ac1a-f28fbff24a40', 'package_rewards_pro_welcome_bonus', 1200', 'Welcome bonus for Pro package users', null, '2025-10-06 23:47:09.085843+00', '2025-10-18 13:31:07.415649+00'), ('0e94ff84-5b08-409e-b726-1e1597034823', 'max_withdrawal_amount', 500000', 'Maximum withdrawal amount in NGN', '6a2e684e-a4c6-44c0-8813-e362d07fdb8f', '2025-09-13 09:32:59.425187+00', '2025-10-19 21:04:50.025+00'), ('0ea4eef9-9891-4720-ad2c-931536c3601d', 'package_rewards_pro_daily_voxcoin', 250', 'Daily VOXcoin gain for Pro package users', '6a2e684e-a4c6-44c0-8813-e362d07fdb8f', '2025-10-06 23:47:09.085843+00', '2025-10-19 21:08:11.456+00'), ('164fe814-2a31-4b80-a51b-6333e506d26e', 'min_withdrawal_amount', 500', 'Minimum withdrawal amount in NGN', '6a2e684e-a4c6-44c0-8813-e362d07fdb8f', '2025-09-13 09:32:59.425187+00', '2025-10-19 21:11:52.392+00'), ('171bb199-055a-4f38-b8a6-d32cf3949e9a', 'voxskit_reward_pro', 50', 'VOXcoin reward for Pro users per video', null, '2025-10-07 14:59:30.507813+00', '2025-10-07 14:59:30.507813+00'), ('1a135cdf-e34f-4b2f-b2ea-18bb1ec529f2', 'lucky_jet_enabled', tru', 'Enable/disable Lucky Jet game', '6a2e684e-a4c6-44c0-8813-e362d07fdb8f', '2025-10-14 23:50:09.932672+00', '2025-10-20 13:51:12.494+00'), ('1c2c6043-2dc2-488a-9b2c-baf6b5253335', 'package_rewards_amateur_referral_level3', 10', 'Tier 2 referral earnings for Amateur package', null, '2025-10-06 23:47:09.085843+00', '2025-10-18 13:31:07.415649+00'), ('1e66fe2c-a18e-4d25-8f3d-ee09e3566ba3', 'lucky_jet_max_multiplier', '', 'Maximum crash point multiplier (can be increased to 16.0)', null, '2025-10-14 23:50:09.932672+00', '2025-10-14 23:52:01.372463+00')`;
+            const sqlData = `INSERT INTO "public"."platform_settings" ("id", "setting_key", "setting_value", "description", "updated_by", "created_at", "updated_at") VALUES ('05f71457-94dc-49ae-9aa7-976987ddb4cc', 'package_rewards_amateur_welcome_bonus', 800', 'Welcome bonus for Amateur package users', null, '2025-10-06 23:47:09.085843+00', '2025-10-18 13:31:07.415649+00'), ('07af501e-3a01-4e19-9412-a2ac5d0e8384', 'kashfeed_enabled', tru', 'Enable/disable KASHFeed blogging platform', null, '2025-09-13 09:32:59.425187+00', '2025-09-13 09:32:59.425187+00'), ('0d78dd6a-97c6-41df-ac1a-f28fbff24a40', 'package_rewards_pro_welcome_bonus', 1200', 'Welcome bonus for Pro package users', null, '2025-10-06 23:47:09.085843+00', '2025-10-18 13:31:07.415649+00'), ('0e94ff84-5b08-409e-b726-1e1597034823', 'max_withdrawal_amount', 500000', 'Maximum withdrawal amount in NGN', '6a2e684e-a4c6-44c0-8813-e362d07fdb8f', '2025-09-13 09:32:59.425187+00', '2025-10-19 21:04:50.025+00'), ('0ea4eef9-9891-4720-ad2c-931536c3601d', 'package_rewards_pro_daily_kashcoin', 250', 'Daily KASHcoin gain for Pro package users', '6a2e684e-a4c6-44c0-8813-e362d07fdb8f', '2025-10-06 23:47:09.085843+00', '2025-10-19 21:08:11.456+00'), ('164fe814-2a31-4b80-a51b-6333e506d26e', 'min_withdrawal_amount', 500', 'Minimum withdrawal amount in NGN', '6a2e684e-a4c6-44c0-8813-e362d07fdb8f', '2025-09-13 09:32:59.425187+00', '2025-10-19 21:11:52.392+00'), ('171bb199-055a-4f38-b8a6-d32cf3949e9a', 'kashskit_reward_pro', 50', 'KASHcoin reward for Pro users per video', null, '2025-10-07 14:59:30.507813+00', '2025-10-07 14:59:30.507813+00'), ('1a135cdf-e34f-4b2f-b2ea-18bb1ec529f2', 'lucky_jet_enabled', tru', 'Enable/disable Lucky Jet game', '6a2e684e-a4c6-44c0-8813-e362d07fdb8f', '2025-10-14 23:50:09.932672+00', '2025-10-20 13:51:12.494+00'), ('1c2c6043-2dc2-488a-9b2c-baf6b5253335', 'package_rewards_amateur_referral_level3', 10', 'Tier 2 referral earnings for Amateur package', null, '2025-10-06 23:47:09.085843+00', '2025-10-18 13:31:07.415649+00'), ('1e66fe2c-a18e-4d25-8f3d-ee09e3566ba3', 'lucky_jet_max_multiplier', '', 'Maximum crash point multiplier (can be increased to 16.0)', null, '2025-10-14 23:50:09.932672+00', '2025-10-14 23:52:01.372463+00')`;
             
             // This is a simplified parser - in a real scenario, you'd get this from the API
             // For now, let's create some sample settings based on the provided data
@@ -420,9 +420,9 @@
                 },
                 {
                     id: '07af501e-3a01-4e19-9412-a2ac5d0e8384',
-                    setting_key: 'voxfeed_enabled',
+                    setting_key: 'kashfeed_enabled',
                     setting_value: 'true',
-                    description: 'Enable/disable VOXFeed blogging platform',
+                    description: 'Enable/disable KASHFeed blogging platform',
                     updated_at: '2025-09-13 09:32:59.425187+00'
                 },
                 {

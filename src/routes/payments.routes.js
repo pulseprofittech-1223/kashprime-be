@@ -128,6 +128,19 @@ router.post('/verify',
   PaymentController.verifyPayment
 );
 
+const redeemValidation = [
+  body('code')
+    .notEmpty()
+    .withMessage('Deposit code is required')
+    .isString()
+    .isLength({ min: 16, max: 16 })
+    .withMessage('Invalid code format. Code must be 16 characters.'),
+  
+  body('purpose')
+    .notEmpty()
+    .withMessage('Purpose is required (e.g. gaming)')
+];
+
 /**
  * @route   GET /api/payments/transactions
  * @desc    Get user transaction history
@@ -137,6 +150,17 @@ router.get('/transactions',
   authMiddleware,
   transactionHistoryValidation,
   PaymentController.getTransactionHistory
+);
+
+/**
+ * @route   POST /api/payments/redeem-code
+ * @desc    Redeem a deposit code for funds
+ * @access  Private
+ */
+router.post('/redeem-code',
+  authMiddleware,
+  redeemValidation,
+  PaymentController.redeemCode
 );
 
 /**
