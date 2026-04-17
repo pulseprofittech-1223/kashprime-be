@@ -2510,6 +2510,406 @@ const getUserGameActivities = async (req, res) => {
   }
 };
 
+// ─── MERCHANT MANAGEMENT ───────────────────────────────────────────────────
+
+const getMerchantAnalytics = async (req, res) => {
+  try {
+    const { data: merchants, error: merchantErr } = await supabaseAdmin
+      .from('users')
+      .select('id, username, full_name, email, created_at, wallets(referral_balance, total_withdrawn_referral)')
+      .in('role', ['merchant', 'vendor', 'super_vendor']);
+
+    if (merchantErr) throw merchantErr;
+
+    const { data: allReferrals } = await supabaseAdmin
+      .from('referrals')
+      .select('referrer_id, referred_id');
+
+    const { data: allUsers } = await supabaseAdmin
+      .from('users')
+      .select('id, referred_by')
+      .not('referred_by', 'is', null);
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: recentActivity } = await supabaseAdmin
+      .from('kash_user_activities')
+      .select('user_id')
+      .gte('created_at', thirtyDaysAgo);
+
+    const merchantStats = merchants.map(m => {
+      const referralRows = (allReferrals || []).filter(r => r.referrer_id === m.id);
+      const referredIds = referralRows.map(r => r.referred_id);
+      const extraIds = (allUsers || [])
+        .filter(u => u.referred_by === m.id && !referredIds.includes(u.id))
+        .map(u => u.id);
+      const allReferredIds = [...new Set([...referredIds, ...extraIds])];
+
+      const walletData = Array.isArray(m.wallets) ? m.wallets[0] : m.wallets;
+      const revenue = parseFloat(walletData?.referral_balance || 0) + parseFloat(walletData?.total_withdrawn_referral || 0);
+
+      const activeUsers = new Set(
+        (recentActivity || []).filter(a => allReferredIds.includes(a.user_id)).map(a => a.user_id)
+      ).size;
+      const active_rate = allReferredIds.length > 0
+        ? parseFloat(((activeUsers / allReferredIds.length) * 100).toFixed(1))
+        : 0;
+
+      return {
+        id: m.id,
+        username: m.username,
+        referralCount: allReferredIds.length,
+        revenue,
+        active_users: activeUsers,
+        active_rate
+      };
+    });
+
+    const totalMerchants = merchants.length;
+    const topReferrer = [...merchantStats].sort((a, b) => b.referralCount - a.referralCount)[0] || null;
+    const topRevenue = [...merchantStats].sort((a, b) => b.revenue - a.revenue)[0] || null;
+    const topEngagement = [...merchantStats].sort((a, b) => b.active_rate - a.active_rate)[0] || null;
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        total_merchants: totalMerchants,
+        top_referrer: topReferrer,
+        top_revenue: topRevenue,
+        top_engagement: topEngagement
+      }
+    });
+  } catch (error) {
+    console.error('Get merchant analytics error:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch merchant analytics' });
+  }
+};
+
+const getMerchantsList = async (req, res) => {
+  try {
+    const { search, status, sort_by = 'referralCount', sort_order = 'desc', page = 1, limit = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get merchants with wallets
+    let query = supabaseAdmin
+      .from('users')
+      .select('id, username, full_name, email, account_status, created_at, wallets(referral_balance, total_withdrawn_referral)', { count: 'exact' })
+      .in('role', ['merchant', 'vendor', 'super_vendor']);
+
+    if (search) {
+      query = query.or(`username.ilike.%${search}%,full_name.ilike.%${search}%,email.ilike.%${search}%`);
+    }
+    if (status) {
+      query = query.eq('account_status', status);
+    }
+
+    const { data: merchants, count, error: mErr } = await query;
+    if (mErr) throw mErr;
+
+    // Get referrals from the referrals table (source of truth)
+    const { data: allReferrals } = await supabaseAdmin
+      .from('referrals')
+      .select('referrer_id, referred_id');
+
+    // Also get users.referred_by for cross-check
+    const { data: allUsers } = await supabaseAdmin
+      .from('users')
+      .select('id, referred_by')
+      .not('referred_by', 'is', null);
+
+    const { data: activities } = await supabaseAdmin
+      .from('kash_user_activities')
+      .select('user_id');
+
+    const list = merchants.map(m => {
+      // Count from referrals table
+      const referralRows = (allReferrals || []).filter(r => r.referrer_id === m.id);
+      const referredIds = referralRows.map(r => r.referred_id);
+
+      // Also check users.referred_by in case referrals table is missing some
+      const extraIds = (allUsers || [])
+        .filter(u => u.referred_by === m.id && !referredIds.includes(u.id))
+        .map(u => u.id);
+      const allReferredIds = [...new Set([...referredIds, ...extraIds])];
+
+      // Revenue = lifetime referral earnings (balance + withdrawn)
+      const walletData = Array.isArray(m.wallets) ? m.wallets[0] : m.wallets;
+      const revenue = parseFloat(walletData?.referral_balance || 0) + parseFloat(walletData?.total_withdrawn_referral || 0);
+
+      const activityRows = (activities || []).filter(a => allReferredIds.includes(a.user_id));
+      const engagement = activityRows.length;
+      const activeUsers = new Set(
+        activityRows.filter(a => a.created_at >= thirtyDaysAgo).map(a => a.user_id)
+      ).size;
+      const activeRate = allReferredIds.length > 0
+        ? parseFloat(((activeUsers / allReferredIds.length) * 100).toFixed(1))
+        : 0;
+
+      const { wallets: _w, ...merchantBase } = m;
+      return {
+        ...merchantBase,
+        referralCount: allReferredIds.length,
+        revenue,
+        engagement,
+        active_users: activeUsers,
+        active_rate: activeRate
+      };
+    });
+
+    // Sort and Paginate in memory (due to complex computed columns)
+    const sorted = list.sort((a, b) => {
+      const valA = a[sort_by] ?? 0;
+      const valB = b[sort_by] ?? 0;
+      if (typeof valA === 'string') return sort_order === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+      return sort_order === 'desc' ? (valB - valA) : (valA - valB);
+    });
+
+    const paginated = sorted.slice(offset, offset + parseInt(limit));
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        merchants: paginated,
+        pagination: {
+          current_page: parseInt(page),
+          total_items: count || 0,
+          total_pages: Math.ceil((count || 0) / parseInt(limit))
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get merchants list error:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch merchants list' });
+  }
+};
+
+const getMerchantCodeAnalytics = async (req, res) => {
+  try {
+    const { data: codes, error } = await supabaseAdmin
+      .from('deposit_codes')
+      .select('id, merchant_id, status, amount, created_at');
+
+    if (error) throw error;
+
+    const { data: merchantsRaw } = await supabaseAdmin
+      .from('users')
+      .select('id, username, wallets(referral_balance, total_withdrawn_referral)')
+      .in('role', ['merchant', 'vendor', 'super_vendor']);
+
+    const merchantMap = {};
+    (merchantsRaw || []).forEach(m => {
+      const walletData = Array.isArray(m.wallets) ? m.wallets[0] : m.wallets;
+      merchantMap[m.id] = {
+        username: m.username,
+        revenue: parseFloat(walletData?.referral_balance || 0) + parseFloat(walletData?.total_withdrawn_referral || 0)
+      };
+    });
+
+    // Referral counts
+    const { data: allReferrals } = await supabaseAdmin.from('referrals').select('referrer_id, referred_id');
+    const { data: allUsers } = await supabaseAdmin.from('users').select('id, referred_by').not('referred_by', 'is', null);
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: recentActivity } = await supabaseAdmin
+      .from('kash_user_activities')
+      .select('user_id')
+      .gte('created_at', thirtyDaysAgo);
+
+    const statsByMerchant = {};
+    codes?.forEach(c => {
+      const mid = c.merchant_id;
+      if (!mid) return;
+      if (!statsByMerchant[mid]) {
+        statsByMerchant[mid] = {
+          merchant_id: mid,
+          username: merchantMap[mid]?.username || 'Unknown',
+          total_requested: 0,
+          in_stock: 0,
+          redeemed: 0,
+          total_value: 0
+        };
+      }
+      statsByMerchant[mid].total_requested++;
+      if (c.status === 'active') statsByMerchant[mid].in_stock++;
+      if (c.status === 'used') statsByMerchant[mid].redeemed++;
+      statsByMerchant[mid].total_value += parseFloat(c.amount || 0);
+    });
+
+    // Enrich with referral + revenue + active rate
+    const enriched = Object.values(statsByMerchant).map(stat => {
+      const mid = stat.merchant_id;
+      const refIds = new Set([
+        ...(allReferrals || []).filter(r => r.referrer_id === mid).map(r => r.referred_id),
+        ...(allUsers || []).filter(u => u.referred_by === mid).map(u => u.id)
+      ]);
+      const activeCount = new Set(
+        (recentActivity || []).filter(a => refIds.has(a.user_id)).map(a => a.user_id)
+      ).size;
+      const activeRate = refIds.size > 0 ? parseFloat(((activeCount / refIds.size) * 100).toFixed(1)) : 0;
+
+      return {
+        ...stat,
+        referral_count: refIds.size,
+        merchant_revenue: merchantMap[mid]?.revenue || 0,
+        active_rate: activeRate
+      };
+    });
+
+    const topRequested = [...enriched].sort((a, b) => b.total_requested - a.total_requested).slice(0, 5);
+    const highestStock = [...enriched].sort((a, b) => b.in_stock - a.in_stock).slice(0, 5);
+
+    const totalCodes = codes?.length || 0;
+    const usedCodes = codes?.filter(c => c.status === 'used')?.length || 0;
+    const redemptionRate = totalCodes > 0 ? ((usedCodes / totalCodes) * 100).toFixed(1) : 0;
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        redemption_rate: redemptionRate,
+        top_requested: topRequested,
+        highest_stock: highestStock,
+        total_value_generated: enriched.reduce((s, m) => s + m.total_value, 0)
+      }
+    });
+  } catch (error) {
+    console.error('Get merchant code analytics error:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch merchant code analytics' });
+  }
+};
+
+// ─── MERCHANT DETAIL PAGE ────────────────────────────────────────────────────
+
+const getMerchantDetail = async (req, res) => {
+  try {
+    const { merchantId } = req.params;
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // 1. Merchant profile + wallet
+    const { data: merchant, error: mErr } = await supabaseAdmin
+      .from('users')
+      .select('id, username, full_name, email, account_status, role, created_at, referral_code, wallets(referral_balance, total_withdrawn_referral)')
+      .eq('id', merchantId)
+      .single();
+
+    if (mErr || !merchant) {
+      return res.status(404).json({ status: 'error', message: 'Merchant not found' });
+    }
+
+    // 2. Referrals from referrals table
+    const { data: referralRows } = await supabaseAdmin
+      .from('referrals')
+      .select('referred_id, status, reward_amount, created_at')
+      .eq('referrer_id', merchantId);
+
+    // Also cross-check users.referred_by
+    const { data: extraUsers } = await supabaseAdmin
+      .from('users')
+      .select('id, username, full_name, user_tier, created_at, wallets(games_balance, referral_balance)')
+      .eq('referred_by', merchantId);
+
+    const referredIdsFromTable = (referralRows || []).map(r => r.referred_id);
+    const extraIds = (extraUsers || [])
+      .filter(u => !referredIdsFromTable.includes(u.id))
+      .map(u => u.id);
+    const allReferredIds = [...new Set([...referredIdsFromTable, ...extraIds])];
+
+    // 3. Referred user profiles
+    let referredUsers = [];
+    if (allReferredIds.length > 0) {
+      const { data: rUsers } = await supabaseAdmin
+        .from('users')
+        .select('id, username, full_name, user_tier, created_at, wallets(games_balance, referral_balance)')
+        .in('id', allReferredIds);
+      referredUsers = rUsers || [];
+    }
+
+    // 4. Active users (logged any activity in last 30 days)
+    let activeUserIds = new Set();
+    if (allReferredIds.length > 0) {
+      const { data: recentActivity } = await supabaseAdmin
+        .from('kash_user_activities')
+        .select('user_id')
+        .in('user_id', allReferredIds)
+        .gte('created_at', thirtyDaysAgo);
+      (recentActivity || []).forEach(a => activeUserIds.add(a.user_id));
+    }
+
+    // 5. Revenue (transactions) from referred users
+    let referredRevenue = 0;
+    if (allReferredIds.length > 0) {
+      const { data: txns } = await supabaseAdmin
+        .from('transactions')
+        .select('user_id, amount, transaction_type')
+        .in('user_id', allReferredIds)
+        .eq('status', 'completed');
+      referredRevenue = (txns || []).reduce((sum, t) => {
+        const amt = Math.abs(parseFloat(t.amount || 0));
+        if (t.transaction_type === 'deposit') return sum + amt;
+        if (t.transaction_type === 'withdrawal') return sum - amt;
+        return sum;
+      }, 0);
+    }
+
+    // 6. Code inventory
+    const { data: codes } = await supabaseAdmin
+      .from('deposit_codes')
+      .select('id, status, amount, created_at')
+      .eq('merchant_id', merchantId);
+
+    const codeInventory = {
+      total_requested: codes?.length || 0,
+      in_stock: codes?.filter(c => c.status === 'active').length || 0,
+      redeemed: codes?.filter(c => c.status === 'used').length || 0,
+      total_value: codes?.reduce((s, c) => s + parseFloat(c.amount || 0), 0) || 0,
+      redemption_rate: codes?.length > 0
+        ? ((codes.filter(c => c.status === 'used').length / codes.length) * 100).toFixed(1)
+        : '0.0'
+    };
+
+    // 7. Merchant's own earnings
+    const walletData = Array.isArray(merchant.wallets) ? merchant.wallets[0] : merchant.wallets;
+    const merchantRevenue = parseFloat(walletData?.referral_balance || 0) + parseFloat(walletData?.total_withdrawn_referral || 0);
+
+    const activeCount = activeUserIds.size;
+    const totalReferrals = allReferredIds.length;
+    const activeRate = totalReferrals > 0 ? ((activeCount / totalReferrals) * 100).toFixed(1) : '0.0';
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        merchant: {
+          id: merchant.id,
+          username: merchant.username,
+          full_name: merchant.full_name,
+          email: merchant.email,
+          account_status: merchant.account_status,
+          role: merchant.role,
+          referral_code: merchant.referral_code,
+          created_at: merchant.created_at
+        },
+        referral_summary: {
+          total_referred: totalReferrals,
+          active_users: activeCount,
+          active_rate: parseFloat(activeRate),
+          merchant_revenue: merchantRevenue,
+          referred_revenue: referredRevenue
+        },
+        referred_users: referredUsers.map(u => ({
+          id: u.id,
+          username: u.username,
+          full_name: u.full_name,
+          user_tier: u.user_tier,
+          is_active: activeUserIds.has(u.id),
+          created_at: u.created_at
+        })),
+        code_inventory: codeInventory
+      }
+    });
+
+  } catch (error) {
+    console.error('Get merchant detail error:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch merchant details' });
+  }
+};
+
 module.exports = {
   getAllUsers,
   getUserDetails,
@@ -2534,4 +2934,10 @@ module.exports = {
   getActivityAnalytics,
   getUserActivities,
   getUserGameActivities,
+
+  // Merchant Management
+  getMerchantAnalytics,
+  getMerchantsList,
+  getMerchantCodeAnalytics,
+  getMerchantDetail
 };

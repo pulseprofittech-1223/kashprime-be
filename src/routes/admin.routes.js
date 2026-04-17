@@ -211,4 +211,37 @@ router.get('/user/:userId/game-activities', [
   query('userId').isUUID()
 ], adminController.getUserGameActivities);
 
+// ==================== MERCHANT MANAGEMENT ROUTES ====================
+
+/**
+ * GET /api/admin/merchants/analytics
+ * Get top-level merchant performance analytics
+ */
+router.get('/merchants/analytics', adminController.getMerchantAnalytics);
+
+/**
+ * GET /api/admin/merchants/list
+ * Get detailed list of merchants with metrics
+ */
+router.get('/merchants/list', [
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 100 }),
+  query('search').optional().isLength({ max: 100 }),
+  query('status').optional().isIn(['active', 'suspended', 'banned']),
+  query('sort_by').optional().isIn(['referralCount', 'revenue', 'engagement', 'created_at', 'username']),
+  query('sort_order').optional().isIn(['asc', 'desc'])
+], adminController.getMerchantsList);
+
+/**
+ * GET /api/admin/merchants/code-analytics
+ * Get detailed analytics for recharge codes by merchant
+ */
+router.get('/merchants/code-analytics', adminController.getMerchantCodeAnalytics);
+
+/**
+ * GET /api/admin/merchants/:merchantId
+ * Get detailed profile, referral tree, code inventory for a specific merchant
+ */
+router.get('/merchants/:merchantId', adminController.getMerchantDetail);
+
 module.exports = router;
