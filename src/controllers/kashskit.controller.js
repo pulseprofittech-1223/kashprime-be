@@ -1,5 +1,6 @@
 const { supabaseAdmin } = require('../services/supabase.service');
 const path = require('path');
+const { logActivity } = require('../utils/activityLogger');
 const { v4: uuidv4 } = require('uuid');
 
 // ==================== USER ENDPOINTS ====================
@@ -174,6 +175,12 @@ const claimVideoReward = async (req, res) => {
           user_tier: user.user_tier
         }
       });
+    // Log Activity
+    await logActivity(userId, 'kashskit_earn', {
+       video_id: video_id,
+       video_title: video.skit_title,
+       reward_amount: rewardAmount
+    }, req);
 
     res.status(200).json({
       status: 'success',

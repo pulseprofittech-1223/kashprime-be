@@ -2,6 +2,7 @@
 
 const { supabaseAdmin } = require("../services/supabase.service");
 const { getTimeAgo,   } = require('../utils/helpers/gaming');
+const { logActivity } = require('../utils/activityLogger');
 
  
 /**
@@ -268,6 +269,13 @@ const updateGameBalance = async (req, res) => {
         message: 'Balance updated but transaction record failed'
       });
     }
+
+    // Log Activity
+    await logActivity(userId, operation === 'win' ? 'game_win' : 'game_loss', {
+       game_type,
+       amount: gameAmount,
+       reference: game_reference
+    }, req);
 
     return res.status(200).json({
       status: 'success',

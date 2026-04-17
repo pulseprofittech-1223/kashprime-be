@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require('../services/supabase.service');
+const { logActivity } = require('../utils/activityLogger');
 const crypto = require('crypto');
 const {
   DEFAULT_PAYOUT_TABLES, parsePlatformSetting,
@@ -96,6 +97,14 @@ const playGame = async (req, res) => {
         ? [{ ...txBase, transaction_type: 'gaming', earning_type: 'keno_win', amount: payout, reference: generateTransactionReference('WIN'), description: `Keno win - ${matchCount}/${picks.length} matches at ${multiplier}×`, metadata: { game: 'keno', round_id: round?.id, match_count: matchCount, multiplier, payout } }]
         : [{ ...txBase, transaction_type: 'gaming', earning_type: 'keno_loss', amount: -stakeAmount, reference: generateTransactionReference('LOSS'), description: `Keno loss - ${matchCount}/${picks.length} matches`, metadata: { game: 'keno', round_id: round?.id, match_count: matchCount } }])
     ]);
+
+    // Log Activity
+    await logActivity(userId, isWin ? 'game_win' : 'game_loss', {
+      game: 'keno',
+      stake: stakeAmount,
+      payout: payout,
+      matches: matchCount
+    }, req);
 
     return res.status(200).json({
       status:  isWin ? 'success' : 'error',

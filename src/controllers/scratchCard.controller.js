@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require('../services/supabase.service');
+const { logActivity } = require('../utils/activityLogger');
 const {
   DEFAULT_WEIGHTS, DEFAULT_MULTIPLIERS,
   parsePlatformSetting, generateScratchCard, generateTransactionReference, validateStake
@@ -78,6 +79,16 @@ const playGame = async (req, res) => {
         ? [{ ...txBase, transaction_type: 'gaming', earning_type: 'scratch_card_win', amount: payout, reference: generateTransactionReference('WIN'), description: `Scratch Card win - ${matchCount}× ${matchedSymbol} at ${multiplier}×`, metadata: { game: 'scratch_card', round_id: round?.id, matched_symbol: matchedSymbol, match_count: matchCount, multiplier, payout } }]
         : [{ ...txBase, transaction_type: 'gaming', earning_type: 'scratch_card_loss', amount: -stakeAmount, reference: generateTransactionReference('LOSS'), description: 'Scratch Card - no match', metadata: { game: 'scratch_card', round_id: round?.id } }])
     ]);
+
+    // Log Activity
+    await logActivity(userId, isWin ? 'game_win' : 'game_loss', {
+      game: 'scratch_card',
+      stake: stakeAmount,
+      payout: payout,
+      multiplier,
+      symbol: matchedSymbol,
+      matches: matchCount
+    }, req);
 
     return res.status(200).json({
       status:  isWin ? 'success' : 'error',

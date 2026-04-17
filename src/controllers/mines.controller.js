@@ -9,6 +9,7 @@ const {
   formatCurrency,
   validateStakeAmount
 } = require('../utils/helpers/mines.helpers');
+const { logActivity } = require('../utils/activityLogger');
 
 /**
  * Get Mines game settings
@@ -281,6 +282,14 @@ const processGameResult = async (req, res) => {
         description: `Mines game loss - Hit bomb at ${successful_clicks} clicks`,
         metadata: { game: 'mines', round_id: roundId, successful_clicks }
       });
+      
+      // Log Activity
+      await logActivity(userId, 'game_loss', {
+        game: 'mines',
+        stake: round.stake_amount,
+        clicks: successful_clicks,
+        reason: 'hit_bomb'
+      }, req);
 
       return res.status(200).json({
         status: 'error',
@@ -345,6 +354,15 @@ const processGameResult = async (req, res) => {
         profit 
       }
     });
+    
+    // Log Activity
+    await logActivity(userId, 'game_win', {
+      game: 'mines',
+      stake: round.stake_amount,
+      payout: payout,
+      multiplier: cashoutMultiplier,
+      clicks: successful_clicks
+    }, req);
 
     return res.status(200).json({
       status: 'success',

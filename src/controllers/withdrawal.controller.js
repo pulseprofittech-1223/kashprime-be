@@ -1,5 +1,6 @@
 const { supabaseAdmin } = require('../services/supabase.service');
 const bcrypt = require('bcryptjs');
+const { logActivity } = require('../utils/activityLogger');
 
 const createWithdrawalRequest = async (req, res) => {
   try {
@@ -68,42 +69,10 @@ const createWithdrawalRequest = async (req, res) => {
     } else if (balance_type === 'referral_balance') {
       // MERCHANTS ONLY CHECK FOR REFERRAL WITHDRAWAL
       if (user.role !== 'merchant') {
-        const minRefsNeeded = limitsMap['merchant_min_referrals'] || 10;
-        const minRefDeposit = limitsMap['merchant_min_referral_deposit'] || 5000;
-
-        // Check if user has met criteria
-        const { data: directReferrals } = await supabaseAdmin
-           .from('users')
-           .select('id')
-           .eq('referred_by', userId);
-
-        let validCount = 0;
-        if (directReferrals && directReferrals.length > 0) {
-           for (const refUser of directReferrals) {
-              const { data: deposits } = await supabaseAdmin
-                 .from('transactions')
-                 .select('amount')
-                 .eq('user_id', refUser.id)
-                 .eq('transaction_type', 'deposit')
-                 .eq('status', 'completed');
-              const totalDeposit = deposits?.reduce((summ, tx) => summ + parseFloat(tx.amount), 0) || 0;
-              if (totalDeposit >= minRefDeposit) {
-                 validCount++;
-              }
-           }
-        }
-
-        if (validCount < minRefsNeeded) {
-           return res.status(403).json({
-             status: 'error',
-             message: `You need at least ${minRefsNeeded} referrals with minimum ₦${minRefDeposit.toLocaleString()} deposits each to withdraw referral earnings. (Current valid: ${validCount}/${minRefsNeeded})`
-           });
-        } else {
-           return res.status(403).json({
-             status: 'error',
-             message: 'You must apply as a Merchant on your Referral page to withdraw referral earnings.'
-           });
-        }
+        return res.status(403).json({
+          status: 'error',
+          message: 'You must apply as a Merchant on your Referral page to withdraw referral earnings.'
+        });
       }
 
       minAmount = limitsMap['min_withdrawal_referral'] || 2500;
@@ -116,6 +85,24 @@ const createWithdrawalRequest = async (req, res) => {
         status: 'error',
         message: `Withdrawal amount must be between ₦${minAmount.toLocaleString()} and ₦${maxAmount.toLocaleString()} for ${balance_type.replace('_', ' ')}`
       });
+    }
+
+    // New logic: Prevent multiple pending coin withdrawals
+    if (balance_type === 'coins_balance') {
+      const { data: pendingCoinWithdrawal } = await supabaseAdmin
+        .from('transactions')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('transaction_type', 'withdrawal')
+        .eq('balance_type', 'coins_balance')
+        .eq('status', 'pending');
+        
+      if (pendingCoinWithdrawal && pendingCoinWithdrawal.length > 0) {
+         return res.status(400).json({
+            status: 'error',
+            message: 'You already have a pending coin withdrawal. Please wait for it to be processed before requesting another.'
+         });
+      }
     }
     // Get user wallet
     const { data: wallet, error: walletError } = await supabaseAdmin
@@ -187,7 +174,7 @@ const createWithdrawalRequest = async (req, res) => {
         .from('wallets')
         .update(updateData)
         .eq('user_id', userId);
-      return res.status(401).json({
+      return res.status(400).json({
         status: 'error',
         message: `Invalid transaction PIN. ${newAttempts >= 3 ? 'PIN locked for 30 minutes.' : `${3 - newAttempts} attempts remaining.`}`
       });
@@ -205,18 +192,23 @@ const createWithdrawalRequest = async (req, res) => {
       .from('wallets')
       .update({ pin_attempts: 0, pin_locked_until: null })
       .eq('user_id', userId);
-    // Deduct from the specific balance type
-    const newBalance = currentBalance - amount;
+      
+    // Deduct from the specific balance type (Skip for coins_balance)
+    let newBalance = currentBalance;
     const totalWithdrawnField = `total_withdrawn_${balance_type.replace('_balance', '')}`;
     const currentTotalWithdrawn = parseFloat(wallet[totalWithdrawnField] || 0);
-    const { error: deductError } = await supabaseAdmin
-      .from('wallets')
-      .update({
-        [balance_type]: newBalance,
-        [totalWithdrawnField]: currentTotalWithdrawn + amount
-      })
-      .eq('user_id', userId);
-    if (deductError) throw deductError;
+    
+    if (balance_type !== 'coins_balance') {
+      newBalance = currentBalance - amount;
+      const { error: deductError } = await supabaseAdmin
+        .from('wallets')
+        .update({
+          [balance_type]: newBalance,
+          [totalWithdrawnField]: currentTotalWithdrawn + amount
+        })
+        .eq('user_id', userId);
+      if (deductError) throw deductError;
+    }
     // Create withdrawal transaction
     const { data: transaction, error: transError } = await supabaseAdmin
       .from('transactions')
@@ -243,6 +235,13 @@ const createWithdrawalRequest = async (req, res) => {
       .select()
       .single();
     if (transError) throw transError;
+
+    // Log Activity
+    await logActivity(userId, 'withdrawal_request', {
+       amount,
+       balance_type,
+       reference: `WD-${Date.now()}-${userId.slice(-4).toUpperCase()}`
+    }, req);
     res.status(201).json({
       status: 'success',
       message: 'Withdrawal request submitted successfully',

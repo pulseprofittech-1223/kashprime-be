@@ -1,6 +1,7 @@
 const { validationResult } = require('express-validator');
 const { supabaseAdmin } = require('../services/supabase.service');
 const { formatResponse } = require('../utils/helpers');
+const { logActivity } = require('../utils/activityLogger');
 const { getSettings } = require('./settings.controller');
 const MESSAGES = require('../utils/constants/messages');
 const bcrypt = require('bcryptjs');
@@ -180,6 +181,9 @@ const updateProfile = async (req, res) => {
     if (error) {
       throw new Error('Failed to update profile');
     }
+
+    // Log Activity
+    await logActivity(userId, 'profile_update', { fields: Object.keys(updateData) }, req);
 
     delete updatedUser.password;
     delete updatedUser.reset_otp;
@@ -481,6 +485,12 @@ const updateWallet = async (req, res) => {
         message: 'Failed to update wallet information'
       });
     }
+
+    // Log Activity
+    await logActivity(userId, 'wallet_update', { 
+       bank_update: account_name || bank_name || account_number ? true : false,
+       pin_update: pin !== undefined
+    }, req);
 
     res.status(200).json({
       status: 'success',

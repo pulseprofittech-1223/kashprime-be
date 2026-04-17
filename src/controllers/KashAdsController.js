@@ -1,5 +1,6 @@
 const { supabaseAdmin } = require('../services/supabase.service');
 const { formatResponse } = require('../utils/responseFormatter');
+const { logActivity } = require('../utils/activityLogger');
 
 const getKashAdsSettings = async () => {
   const { data: settings, error } = await supabaseAdmin
@@ -158,6 +159,9 @@ const recordAdClick = async (req, res) => {
 
     if (updateError) throw updateError;
 
+    // Log Activity
+    await logActivity(userId, 'ad_click', { click_count: newClickCount }, req);
+
     const canClaim = newClickCount >= clicksRequired;
 
     res.status(200).json(
@@ -259,6 +263,9 @@ const claimKashAdsReward = async (req, res) => {
       .eq('user_id', userId);
 
     if (kashUpdateError) throw kashUpdateError;
+
+    // Log Activity
+    await logActivity(userId, 'ad_reward_claim', { reward_amount: rewardAmount }, req);
 
     const nextAvailableAt = new Date(now.getTime() + (cooldownHours * 60 * 60 * 1000));
 

@@ -1,6 +1,7 @@
 const { validationResult } = require('express-validator');
 const authService = require('../services/auth.service');
 const { formatResponse } = require('../utils/helpers');
+const { logActivity } = require('../utils/activityLogger');
 const MESSAGES = require('../utils/constants/messages');
 const { getFirstValidationError, formatValidationErrors } = require('../utils/validators/auth');
 
@@ -21,9 +22,17 @@ const register = async (req, res) => {
         }
       });
     }
+    // Capture IP Address
+    const ip_address = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress;
+    req.body.ip_address = ip_address;
 
     const result = await authService.registerUser(req.body);
     
+    // Log Activity
+    if (result && result.user) {
+      await logActivity(result.user.id, 'register', { email: result.user.email }, req);
+    }
+
     res.status(201).json({
       status: 'success',
       message: 'Registration successful! Welcome!',
@@ -65,6 +74,11 @@ const login = async (req, res) => {
     const { credential, password } = req.body;
     const result = await authService.loginUser(credential, password);
     
+    // Log Activity
+    if (result && result.user) {
+      await logActivity(result.user.id, 'login', { method: credential.includes('@') ? 'email' : 'username' }, req);
+    }
+
     res.status(200).json(
       formatResponse('success', MESSAGES.SUCCESS.LOGIN, result)
     );

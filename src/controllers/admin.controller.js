@@ -573,6 +573,8 @@ const getPendingWithdrawals = async (req, res) => {
       page = 1,
       limit = 20,
       search = '',
+      status = 'pending',
+      balance_type = '', 
       sort_by = 'created_at',
       sort_order = 'desc'
     } = req.query;
@@ -583,13 +585,25 @@ const getPendingWithdrawals = async (req, res) => {
       .from('transactions')
       .select(`
         id, user_id, amount, currency, description, reference,
-        withdrawal_method, created_at, metadata, balance_type,
+        withdrawal_method, created_at, metadata, balance_type, status,
         users!transactions_user_id_fkey (id, username, full_name, email, phone_number)
       `)
       .eq('transaction_type', 'withdrawal')
-      .eq('status', 'pending')
       .range(offset, offset + parseInt(limit) - 1)
       .order(sort_by, { ascending: sort_order === 'asc' });
+
+    // Status Filter
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    // Balance Type Filter (Allow specific or exclude coins by default if viewing pending)
+    if (balance_type) {
+      query = query.eq('balance_type', balance_type);
+    } else if (status === 'pending') {
+      // Traditionally, the management table excludes coins
+      query = query.neq('balance_type', 'coins_balance');
+    }
 
     if (search) {
       const { data: searchUsers, error: userError } = await supabaseAdmin
@@ -605,7 +619,7 @@ const getPendingWithdrawals = async (req, res) => {
       } else {
         return res.status(200).json({
           status: 'success',
-          message: 'Pending withdrawals retrieved successfully',
+          message: 'Withdrawals retrieved successfully',
           data: {
             withdrawals: [],
             pagination: {
@@ -627,8 +641,14 @@ const getPendingWithdrawals = async (req, res) => {
     let countQuery = supabaseAdmin
       .from('transactions')
       .select('*', { count: 'exact', head: true })
-      .eq('transaction_type', 'withdrawal')
-      .eq('status', 'pending');
+      .eq('transaction_type', 'withdrawal');
+
+    if (status) countQuery = countQuery.eq('status', status);
+    if (balance_type) {
+      countQuery = countQuery.eq('balance_type', balance_type);
+    } else if (status === 'pending') {
+      countQuery = countQuery.neq('balance_type', 'coins_balance');
+    }
 
     if (search) {
       const { data: searchUsers, error: userError } = await supabaseAdmin
@@ -706,30 +726,15 @@ const processWithdrawal = async (req, res) => {
     }
 
     if (action === 'approve') {
-      const balanceType = transaction.balance_type || 'referral_balance';
-      const balanceName = balanceType.replace('_balance', '');
-      const totalWithdrawnField = `total_withdrawn_${balanceName}`;
-
-      const { data: currentWallet, error: walletFetchError } = await supabaseAdmin
-        .from('wallets')
-        .select(totalWithdrawnField)
-        .eq('user_id', transaction.user_id)
-        .single();
-
-      if (walletFetchError) {
-        console.error(`Failed to fetch wallet for ${totalWithdrawnField} update:`, walletFetchError);
-        throw walletFetchError;
-      }
-
-      const currentTotal = parseFloat(currentWallet[totalWithdrawnField] || 0);
-      const newTotalWithdrawn = currentTotal + parseFloat(transaction.amount);
-
       const { error: updateError } = await supabaseAdmin
         .from('transactions')
         .update({
           status: 'completed',
-          processed_by: req.user.id,
-          processed_at: new Date().toISOString()
+          metadata: {
+            ...(transaction.metadata || {}),
+            processed_by: req.user.id,
+            processed_at: new Date().toISOString()
+          }
         })
         .eq('id', transactionId);
 
@@ -738,27 +743,6 @@ const processWithdrawal = async (req, res) => {
         throw updateError;
       }
 
-      const { error: walletUpdateError } = await supabaseAdmin
-        .from('wallets')
-        .update({
-          [totalWithdrawnField]: newTotalWithdrawn
-        })
-        .eq('user_id', transaction.user_id);
-
-      if (walletUpdateError) {
-        console.error(`Failed to update ${totalWithdrawnField}:`, walletUpdateError);
-        await supabaseAdmin
-          .from('transactions')
-          .update({
-            status: 'pending',
-            processed_by: null,
-            processed_at: null
-          })
-          .eq('id', transactionId);
-        throw walletUpdateError;
-      }
-
-      console.log(`✅ Updated ${totalWithdrawnField}: ${currentTotal} + ${transaction.amount} = ${newTotalWithdrawn}`);
       console.log('✅ Withdrawal approved successfully');
 
       await supabaseAdmin
@@ -766,14 +750,13 @@ const processWithdrawal = async (req, res) => {
         .insert({
           admin_id: req.user.id,
           activity_type: 'withdrawal_approved',
-          description: `Approved withdrawal for ${transaction.users.username} - ₦${parseFloat(transaction.amount).toLocaleString()}`,
+          description: `Approved withdrawal for ${transaction.users?.username || 'Unknown'} - ₦${parseFloat(transaction.amount).toLocaleString()}`,
           metadata: { 
             transactionId, 
             action: 'approve', 
             amount: parseFloat(transaction.amount),
             user_id: transaction.user_id,
-            new_total_withdrawn: newTotalWithdrawn,
-            balance_type: balanceType
+            balance_type: transaction.balance_type
           }
         });
 
@@ -784,44 +767,41 @@ const processWithdrawal = async (req, res) => {
           transactionId, 
           action: 'approve', 
           amount: parseFloat(transaction.amount),
-          username: transaction.users.username,
-          new_total_withdrawn: newTotalWithdrawn,
-          balance_type: balanceType
+          username: transaction.users?.username || 'Unknown'
         }
       });
 
     } else if (action === 'decline') {
       console.log('Processing decline with refund...');
-
       const balanceType = transaction.balance_type || 'referral_balance';
+      const balanceName = balanceType.replace('_balance', '');
+      const totalWithdrawnField = `total_withdrawn_${balanceName}`;
 
-      const { data: currentWallet, error: walletFetchError } = await supabaseAdmin
+      const { data: wallet, error: walletFetchError } = await supabaseAdmin
         .from('wallets')
-        .select(balanceType)
+        .select(`id, ${balanceType}, ${totalWithdrawnField}`)
         .eq('user_id', transaction.user_id)
         .single();
 
-      if (walletFetchError || !currentWallet) {
+      if (walletFetchError || !wallet) {
         console.error('Failed to fetch user wallet:', walletFetchError);
-        return res.status(500).json({
-          status: 'error',
-          message: 'Failed to fetch user wallet'
-        });
+        return res.status(500).json({ status: 'error', message: 'Failed to fetch user wallet' });
       }
 
-      const currentBalance = parseFloat(currentWallet[balanceType] || 0);
-      const refundAmount = parseFloat(transaction.amount);
-      const newBalance = currentBalance + refundAmount;
-
-      console.log(`Refunding ${refundAmount} to ${balanceType}. New balance: ${newBalance}`);
+      const currentBalance = parseFloat(wallet[balanceType] || 0);
+      const currentTotalWithdrawn = parseFloat(wallet[totalWithdrawnField] || 0);
+      const amount = parseFloat(transaction.amount);
 
       const { error: updateTransactionError } = await supabaseAdmin
         .from('transactions')
         .update({
           status: 'cancelled',
-          decline_reason: decline_reason?.trim() || null,
-          processed_by: req.user.id,
-          processed_at: new Date().toISOString()
+          metadata: {
+            ...(transaction.metadata || {}),
+            decline_reason: decline_reason?.trim() || 'No reason provided',
+            processed_by: req.user.id,
+            processed_at: new Date().toISOString()
+          }
         })
         .eq('id', transactionId);
 
@@ -830,61 +810,27 @@ const processWithdrawal = async (req, res) => {
       const { error: walletUpdateError } = await supabaseAdmin
         .from('wallets')
         .update({
-          [balanceType]: newBalance
+          [balanceType]: currentBalance + amount,
+          [totalWithdrawnField]: Math.max(0, currentTotalWithdrawn - amount)
         })
         .eq('user_id', transaction.user_id);
 
       if (walletUpdateError) {
-        console.error(`Failed to update wallet balance ${balanceType}:`, walletUpdateError);
-        
-        await supabaseAdmin
-          .from('transactions')
-          .update({
-            status: 'pending',
-            decline_reason: null,
-            processed_by: null,
-            processed_at: null
-          })
-          .eq('id', transactionId);
-
-        return res.status(500).json({
-          status: 'error',
-          message: 'Failed to process refund'
-        });
+        console.error(`Failed to refund wallet for transaction ${transactionId}:`, walletUpdateError);
+        await supabaseAdmin.from('transactions').update({ status: 'pending' }).eq('id', transactionId);
+        return res.status(500).json({ status: 'error', message: 'Failed to process refund' });
       }
-
-      console.log(' Withdrawal decline and refund completed successfully');
 
       await supabaseAdmin
         .from('admin_activities')
         .insert({
           admin_id: req.user.id,
           activity_type: 'withdrawal_declined',
-          description: `Declined withdrawal for ${transaction.users.username} - ₦${parseFloat(transaction.amount).toLocaleString()}${decline_reason?.trim() ? ` (Reason: ${decline_reason.trim()})` : ''}`,
-          metadata: { 
-            transactionId, 
-            action: 'decline', 
-            decline_reason: decline_reason?.trim() || null, 
-            amount: parseFloat(transaction.amount),
-            user_id: transaction.user_id,
-            balance_type: balanceType,
-            refunded_to_balance: newBalance
-          }
+          description: `Declined withdrawal for ${transaction.users?.username || 'Unknown'} - ₦${amount.toLocaleString()}`,
+          metadata: { transactionId, action: 'decline', amount, user_id: transaction.user_id, balance_type: balanceType }
         });
 
-      return res.status(200).json({
-        status: 'success',
-        message: 'Withdrawal declined successfully and amount refunded to user',
-        data: { 
-          transactionId, 
-          action: 'decline', 
-          amount: parseFloat(transaction.amount),
-          username: transaction.users.username,
-          decline_reason: decline_reason?.trim() || null,
-          balance_type: balanceType,
-          new_balance: newBalance
-        }
-      });
+      return res.status(200).json({ status: 'success', message: 'Withdrawal declined successfully and amount refunded' });
     }
 
   } catch (error) {
@@ -956,50 +902,22 @@ const bulkProcessWithdrawals = async (req, res) => {
         console.log(`Processing transaction ${transaction.id} for user ${transaction.users.username}`);
 
         if (action === 'approve') {
-          const balanceType = transaction.balance_type || 'referral_balance';
-          const balanceName = balanceType.replace('_balance', '');
-          const totalWithdrawnField = `total_withdrawn_${balanceName}`;
-
-          const { data: currentWallet, error: walletFetchError } = await supabaseAdmin
-            .from('wallets')
-            .select(totalWithdrawnField)
-            .eq('user_id', transaction.user_id)
-            .single();
-            
-          if (walletFetchError) {
-            console.error(`Failed to fetch wallet for transaction ${transaction.id}:`, walletFetchError);
-            failedIds.push(transaction.id);
-            continue;
-          }
-
-          const currentTotal = parseFloat(currentWallet[totalWithdrawnField] || 0);
-          const newTotalWithdrawn = currentTotal + parseFloat(transaction.amount);
-
           const { error: updateError } = await supabaseAdmin
             .from('transactions')
             .update({
               status: 'completed',
-              processed_by: req.user.id,
-              processed_at: new Date().toISOString()
+              metadata: {
+                ...(transaction.metadata || {}),
+                processed_by: req.user.id,
+                processed_at: new Date().toISOString()
+              }
             })
             .eq('id', transaction.id);
 
           if (!updateError) {
-            const { error: walletUpdateError } = await supabaseAdmin
-              .from('wallets')
-              .update({
-                [totalWithdrawnField]: newTotalWithdrawn
-              })
-              .eq('user_id', transaction.user_id);
-              
-            if (walletUpdateError) {
-              console.error(`Failed to update ${totalWithdrawnField} for transaction ${transaction.id}:`, walletUpdateError);
-              failedIds.push(transaction.id);
-            } else {
-              processedIds.push(transaction.id);
-              totalAmount += parseFloat(transaction.amount);
-              console.log(`✅ Approved transaction ${transaction.id}`);
-            }
+            processedIds.push(transaction.id);
+            totalAmount += parseFloat(transaction.amount);
+            console.log(`✅ Approved transaction ${transaction.id}`);
           } else {
             console.error(`Failed to approve transaction ${transaction.id}:`, updateError);
             failedIds.push(transaction.id);
@@ -1007,26 +925,35 @@ const bulkProcessWithdrawals = async (req, res) => {
 
         } else if (action === 'decline') {
           const balanceType = transaction.balance_type || 'referral_balance';
+          const balanceName = balanceType.replace('_balance', '');
+          const totalWithdrawnField = `total_withdrawn_${balanceName}`;
           
-          const { data: currentWallet, error: walletFetchError } = await supabaseAdmin
+          const { data: wallet, error: walletFetchError } = await supabaseAdmin
             .from('wallets')
-            .select(balanceType)
+            .select(`id, ${balanceType}, ${totalWithdrawnField}`)
             .eq('user_id', transaction.user_id)
             .single();
 
-          if (walletFetchError || !currentWallet) {
+          if (walletFetchError || !wallet) {
             console.error(`Failed to fetch wallet for transaction ${transaction.id}:`, walletFetchError);
             failedIds.push(transaction.id);
             continue;
           }
 
+          const currentBalance = parseFloat(wallet[balanceType] || 0);
+          const currentTotalWithdrawn = parseFloat(wallet[totalWithdrawnField] || 0);
+          const refundAmount = parseFloat(transaction.amount);
+
           const { error: updateTransactionError } = await supabaseAdmin
             .from('transactions')
             .update({
               status: 'cancelled',
-              decline_reason: decline_reason?.trim() || null,
-              processed_by: req.user.id,
-              processed_at: new Date().toISOString()
+              metadata: {
+                ...(transaction.metadata || {}),
+                decline_reason: decline_reason?.trim() || 'No reason provided',
+                processed_by: req.user.id,
+                processed_at: new Date().toISOString()
+              }
             })
             .eq('id', transaction.id);
 
@@ -1036,14 +963,11 @@ const bulkProcessWithdrawals = async (req, res) => {
             continue;
           }
 
-          const currentBalance = parseFloat(currentWallet[balanceType] || 0);
-          const refundAmount = parseFloat(transaction.amount);
-          const newBalance = currentBalance + refundAmount;
-
           const { error: walletUpdateError } = await supabaseAdmin
             .from('wallets')
             .update({
-              [balanceType]: newBalance
+              [balanceType]: currentBalance + refundAmount,
+              [totalWithdrawnField]: Math.max(0, currentTotalWithdrawn - refundAmount)
             })
             .eq('user_id', transaction.user_id);
 
@@ -2209,6 +2133,299 @@ const getGameAnalytics = async (req, res) => {
 
 
 
+// ==================== ACTIVITY MONITORING CONTROLLERS ====================
+
+const getActivityAnalytics = async (req, res) => {
+  try {
+    const timeframe = req.query.timeframe || 'daily';
+    const now = new Date();
+    let timeLimit = new Date();
+    let prevTimeLimit = new Date();
+    
+    if (timeframe === 'daily') {
+      timeLimit.setHours(timeLimit.getHours() - 24);
+      prevTimeLimit.setHours(prevTimeLimit.getHours() - 48);
+    } else if (timeframe === 'weekly') {
+      timeLimit.setDate(timeLimit.getDate() - 7);
+      prevTimeLimit.setDate(prevTimeLimit.setDate() - 14);
+    } else {
+      timeLimit.setDate(timeLimit.getDate() - 30);
+      prevTimeLimit.setDate(prevTimeLimit.setDate() - 60);
+    }
+
+    // 1. Fetch activities for current and previous period
+    const { data: activities } = await supabaseAdmin
+      .from('kash_user_activities')
+      .select('action_type, created_at, user_id, metadata, ip_address, users(username, email, full_name)')
+      .gte('created_at', timeLimit.toISOString())
+      .order('created_at', { ascending: false });
+
+    const { data: prevActivities } = await supabaseAdmin
+      .from('kash_user_activities')
+      .select('action_type')
+      .lt('created_at', timeLimit.toISOString())
+      .gte('created_at', prevTimeLimit.toISOString());
+
+    const validActivities = activities || [];
+    const prevValidActivities = prevActivities || [];
+
+    // ── Helper Logic (Sync with Game Analytics) ──
+    const isWinType   = (t) => t && t.earning_type 
+      ? (t.earning_type.endsWith('_win') || t.earning_type === 'win' || t.earning_type === 'cashout' || t.transaction_type === 'reward' || t.transaction_type === 'game_win')
+      : (t && parseFloat(t.amount || 0) > 0 && !['deposit', 'transfer'].includes(t.transaction_type));
+
+    const isStakeType = (t) => t && t.earning_type
+      ? (t.earning_type.endsWith('_stake') || t.earning_type === 'bet' || t.earning_type === 'stake' || t.transaction_type === 'bet' || t.transaction_type === 'game_entry')
+      : (t && parseFloat(t.amount || 0) < 0 && !['withdrawal', 'transfer'].includes(t.transaction_type));
+
+    // 2. User Statistics
+    const { data: newUsers } = await supabaseAdmin
+      .from('users')
+      .select('id, created_at')
+      .gte('created_at', timeLimit.toISOString());
+
+    const activeFromActions = new Set(validActivities.map(a => a.user_id));
+    
+    // Also consider users who made transactions in the period
+    const { data: recentTxnsUsers } = await supabaseAdmin
+      .from('transactions')
+      .select('user_id')
+      .gte('created_at', timeLimit.toISOString());
+    
+    const activeFromTxns = new Set(recentTxnsUsers?.map(t => t.user_id));
+    const uniqueUsersSet = new Set([...activeFromActions, ...activeFromTxns]);
+
+    const returningUsers = Array.from(uniqueUsersSet).filter(uid => !newUsers?.some(nu => nu.id === uid));
+    const returningUsersPct = uniqueUsersSet.size > 0 ? ((returningUsers.length / uniqueUsersSet.size) * 100).toFixed(1) : 0;
+
+    // 3. Transactions & Revenue
+    const { data: txns } = await supabaseAdmin
+      .from('transactions')
+      .select('*')
+      .gte('created_at', timeLimit.toISOString());
+
+    const totalTxns = txns?.length || 0;
+    const failed_txns = txns?.filter(t => t.status === 'failed')?.length || 0;
+    
+    // Revenue logic (Total Stakes - Total Rewards)
+    const inflow = (txns || []).filter(t => isStakeType(t) || ['ads_purchase', 'investment_start'].includes(t.transaction_type))
+                               .reduce((sum, tx) => sum + Math.abs(parseFloat(tx.amount || 0)), 0);
+    const outflow = (txns || []).filter(t => isWinType(t) || ['reward', 'refund', 'commission'].includes(t.transaction_type))
+                                .reduce((sum, tx) => sum + Math.abs(parseFloat(tx.amount || 0)), 0);
+    const totalRevenue = inflow - outflow;
+    
+    // Win Rate - Use All-time average to match Game Management Dashboard
+    const { data: allTxns } = await supabaseAdmin.from('transactions').select('transaction_type, earning_type, amount');
+    const allWinsCount = allTxns?.filter(t => isWinType(t))?.length || 0;
+    const allEntriesCount = allTxns?.filter(t => isStakeType(t))?.length || 0;
+    const winRate = allEntriesCount > 0 ? ((allWinsCount / allEntriesCount) * 100).toFixed(1) : 0;
+
+    // 4. Wallet Stats
+    const { data: wallets } = await supabaseAdmin
+      .from('wallets')
+      .select('games_balance, coins_balance, referral_balance');
+    const allBalances = (wallets || []).map(w => parseFloat(w.games_balance || 0) + parseFloat(w.coins_balance || 0) + parseFloat(w.referral_balance || 0));
+    const walletStats = {
+      avg: allBalances.length > 0 ? (allBalances.reduce((a,b)=>a+b,0)/allBalances.length).toFixed(0) : 0,
+      max: allBalances.length > 0 ? Math.max(...allBalances).toFixed(0) : 0,
+      min: allBalances.length > 0 ? Math.min(...allBalances).toFixed(0) : 0
+    };
+
+    // 5. Action Breakdown Grouping
+    const breakdownMap = validActivities.reduce((acc, act) => {
+      if (!acc[act.action_type]) acc[act.action_type] = { count: 0, users: new Set() };
+      acc[act.action_type].count++;
+      acc[act.action_type].users.add(act.user_id);
+      return acc;
+    }, {});
+
+    const breakdownList = Object.entries(breakdownMap).map(([type, stats]) => ({
+       action_type: type,
+       count: stats.count,
+       unique_users: stats.users.size,
+       prev_count: prevValidActivities.filter(pa => pa.action_type === type).length
+    }));
+
+    // 6. Overtime Trends
+    const overtime = [];
+    if (timeframe === 'daily') {
+       for(let i=0; i<24; i++) overtime.push({ label: `${i}:00`, count: 0 });
+    } else {
+       for(let i=(timeframe==='weekly'?6:29); i>=0; i--) {
+          const d = new Date(); d.setDate(d.getDate() - i);
+          overtime.push({ label: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }), count: 0 });
+       }
+    }
+
+    validActivities.forEach(act => {
+      const dt = new Date(act.created_at);
+      let lb = timeframe === 'daily' ? dt.getHours() + ':00' : dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+      const bin = overtime.find(x => x.label === lb);
+      if (bin) bin.count += 1;
+    });
+
+    // 7. Detection & Behavior
+    const anomalies = [];
+    const impressions = breakdownMap['ad_impression']?.count || 0;
+    const clicks = breakdownMap['ad_click']?.count || 0;
+    const ctr = impressions > 0 ? ((clicks / impressions) * 100).toFixed(2) : 0;
+
+    if (clicks > 200 && ctr > 30) {
+       anomalies.push({ user: 'System', type: 'High CTR Spike', reason: `CTR is ${ctr}% (${clicks} clicks).`, severity: 'high', timestamp: new Date() });
+    }
+
+    const userMetrics = {};
+    validActivities.forEach(a => {
+       if (!userMetrics[a.user_id]) userMetrics[a.user_id] = { 
+           ips: new Set(), 
+           actions: 0, 
+           clickCount: 0,
+           username: a.users?.username || 'System',
+           email: a.users?.email || 'N/A'
+       };
+       if (a.ip_address) userMetrics[a.user_id].ips.add(a.ip_address);
+       userMetrics[a.user_id].actions++;
+       if (a.action_type === 'ad_click') userMetrics[a.user_id].clickCount++;
+    });
+
+    Object.entries(userMetrics).forEach(([uid, m]) => {
+       if (m.ips.size > 3) anomalies.push({ user_id: uid, type: 'IP Rotation', reason: `Detected ${m.ips.size} IPs.`, severity: 'medium', timestamp: new Date() });
+       if (m.clickCount > 50) anomalies.push({ user_id: uid, type: 'Click Spike', reason: `User clicked ${m.clickCount} ads.`, severity: 'high', timestamp: new Date() });
+    });
+
+    // 8. Heatmap Data
+    const heatmap = [];
+    for(let d=0; d<7; d++) {
+       for(let h=0; h<24; h++) heatmap.push({ day: d, hour: h, count: 0 });
+    }
+    validActivities.forEach(a => {
+       const dt = new Date(a.created_at);
+       const bin = heatmap.find(h => h.day === dt.getDay() && h.hour === dt.getHours());
+       if (bin) bin.count++;
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        kpi: {
+          total_actions: validActivities.length,
+          prev_total_actions: prevValidActivities.length,
+          active_users: uniqueUsersSet.size,
+          new_users: newUsers?.length || 0,
+          total_txns: totalTxns,
+          failed_txns,
+          total_revenue: totalRevenue,
+          win_rate: winRate,
+          returning_users_pct: returningUsersPct || 0,
+          avg_wallet: walletStats.avg,
+          max_wallet: walletStats.max,
+          min_wallet: walletStats.min,
+          ctr,
+          suspicious_users_count: anomalies.length
+        },
+        breakdownList,
+        overtime,
+        anomalies,
+        heatmap,
+        latestFeed: validActivities.slice(0, 100).map(a => ({
+           id: Math.random().toString(36),
+           created_at: a.created_at,
+           user_id: a.user_id,
+           username: a.users?.username || 'System',
+           email: a.users?.email || 'N/A',
+           action_type: a.action_type,
+           ip_address: a.ip_address,
+           severity: a.metadata?.severity || (userMetrics[a.user_id]?.clickCount > 20 ? 'high' : 'low')
+        })),
+        segments: {
+           mostActive: Object.entries(userMetrics).sort((a,b)=>b[1].actions - a[1].actions).slice(0, 10).map(([id, m]) => ({ 
+              id, 
+              count: m.actions,
+              username: m.username,
+              email: m.email
+           }))
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Activity analytics error:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch activity analytics' });
+  }
+};
+
+
+const getUserActivities = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 50 } = req.query;
+    const offset = (page - 1) * limit;
+
+    const { data: activities, error, count } = await supabaseAdmin
+      .from('kash_user_activities')
+      .select('*', { count: 'exact' })
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + parseInt(limit) - 1);
+
+    if (error && error.code !== '42P01') throw error;
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        activities: activities || [],
+        pagination: {
+          current_page: parseInt(page),
+          total_items: count || 0,
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get user activities error:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch user activities' });
+  }
+};
+
+const getUserGameActivities = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // We can infer game activities from the transactions table
+    const { data: gameTxns, error } = await supabaseAdmin
+        .from('transactions')
+        .select('*')
+        .eq('user_id', userId)
+        .in('transaction_type', ['game_entry', 'game_win'])
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+    if (error) throw error;
+
+    // Process transactions into logical game sessions
+    const sessions = [];
+    gameTxns.forEach(tx => {
+       sessions.push({
+          game_type: tx.metadata?.game_type || 'Unknown Game',
+          action: tx.transaction_type,
+          amount: parseFloat(tx.amount || 0),
+          balance_type: tx.balance_type,
+          created_at: tx.created_at,
+          status: tx.status
+       })
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: sessions
+    });
+
+  } catch (error) {
+    console.error('Get user game activities error:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch user game activities' });
+  }
+};
+
 module.exports = {
   getAllUsers,
   getUserDetails,
@@ -2230,4 +2447,7 @@ module.exports = {
   getDashboardStats,
   getTopEarners,
   getGameAnalytics,
+  getActivityAnalytics,
+  getUserActivities,
+  getUserGameActivities,
 };

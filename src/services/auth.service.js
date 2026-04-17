@@ -19,6 +19,7 @@ const registerUser = async (userData) => {
     fullName,
     phoneNumber,
     referral,
+    ip_address,
     role = 'user'
   } = userData;
 
@@ -79,7 +80,8 @@ const registerUser = async (userData) => {
           user_tier: 'Free',
           referral_code: userReferralCode,
           referred_by: directReferrer?.id || null,
-          role, 
+          role,
+          ip_address,
         },
       ])
       .select()

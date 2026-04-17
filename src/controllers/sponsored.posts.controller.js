@@ -1,5 +1,6 @@
 const { supabaseAdmin } = require("../services/supabase.service");
 const { validationResult } = require("express-validator");
+const { logActivity } = require("../utils/activityLogger");
 const messages = require("../utils/constants/kashfeed");
 
 // Get daily status for sponsored posts
@@ -677,6 +678,12 @@ const engagePost = async (req, res) => {
         }
       }
     ]);
+    // Log Activity
+    await logActivity(userId, 'sponsored_post_earn', {
+       post_id: postId,
+       post_title: post.title,
+       reward_amount: rewardAmount
+    }, req);
 
     const newEngagedCount = (todayCount || 0) + 1;
     const remainingEngagements = dailyLimit - newEngagedCount;

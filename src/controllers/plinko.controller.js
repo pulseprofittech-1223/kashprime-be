@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require('../services/supabase.service');
+const { logActivity } = require('../utils/activityLogger');
 const {
   DEFAULT_MULTIPLIERS, VALID_RISKS, VALID_ROWS,
   parsePlatformSetting, generatePlinkoResult,
@@ -132,6 +133,16 @@ const playGame = async (req, res) => {
         metadata: { game: 'plinko', round_id: round?.id, final_slot: finalSlot, multiplier, payout },
       });
     }
+
+    // Log Activity
+    await logActivity(userId, isWin ? 'game_win' : 'game_loss', {
+      game: 'plinko',
+      stake: stakeAmount,
+      payout: payout,
+      multiplier,
+      risk_level,
+      rows: rowCount
+    }, req);
 
     return res.status(200).json({
       status:  isWin ? 'success' : 'error',

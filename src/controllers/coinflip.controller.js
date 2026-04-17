@@ -12,6 +12,7 @@ const {
   calculateWinRate,
   parsePlatformSetting
 } = require('../utils/helpers/coinflip.helpers');
+const { logActivity } = require('../utils/activityLogger');
 
 /**
  * Get coinflip game settings
@@ -284,6 +285,15 @@ const playGame = async (req, res) => {
           }
         });
     }
+
+    // Log Activity
+    await logActivity(userId, isWin ? 'game_win' : 'game_loss', {
+      game: 'coinflip',
+      stake: stake_amount,
+      payout: payoutAmount,
+      result: coinResult,
+      user_choice: user_choice
+    }, req);
 
     // Return appropriate response
     if (isWin) {

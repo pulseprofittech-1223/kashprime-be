@@ -187,4 +187,28 @@ router.get('/dashboard/stats', adminController.getDashboardStats);
  */
 router.get('/game-analytics', adminController.getGameAnalytics);
 
+// ==================== ACTIVITY MONITORING ROUTES ====================
+
+/**
+ * GET /api/admin/activities/analytics
+ * Get dashboard analytics for all user activities
+ */
+router.get('/activities/analytics', adminController.getActivityAnalytics);
+
+/**
+ * GET /api/admin/user/:userId/activities
+ * Get specific user's platform activities
+ */
+router.get('/user/:userId/activities', [
+  query('userId').isUUID()
+], adminController.getUserActivities);
+
+/**
+ * GET /api/admin/user/:userId/game-activities
+ * Get specific user's game playing activities
+ */
+router.get('/user/:userId/game-activities', [
+  query('userId').isUUID()
+], adminController.getUserGameActivities);
+
 module.exports = router;
