@@ -7,6 +7,7 @@ const {
   validateStakeAmount,
   generateTransactionReference,
 } = require('../utils/helpers/spinWheel.helpers');
+const { logActivity } = require('../utils/activityLogger');
 
 // ─── GET SETTINGS ────────────────────────────────────────────────────────────
 const getSettings = async (req, res) => {
@@ -131,7 +132,6 @@ const playGame = async (req, res) => {
       metadata:         { game: 'spin_wheel', round_id: round?.id, stake_amount: stakeAmount },
     });
 
-    // Log win transaction if applicable
     if (isWin && payout > 0) {
       await supabaseAdmin.from('transactions').insert({
         user_id:          userId,
@@ -145,6 +145,15 @@ const playGame = async (req, res) => {
         metadata:         { game: 'spin_wheel', round_id: round?.id, multiplier: segment.multiplier, payout },
       });
     }
+
+    // Log Activity
+    await logActivity(userId, isWin ? 'game_win' : 'game_loss', {
+      game: 'spin_wheel',
+      stake_amount: stakeAmount,
+      payout_amount: payout,
+      multiplier: segment.multiplier,
+      segment_label: segment.label
+    }, req);
 
     return res.status(200).json({
       status:  isWin ? 'success' : 'error',

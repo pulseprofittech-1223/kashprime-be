@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require('../services/supabase.service');
+const { logActivity } = require('../utils/activityLogger');
 const {
   parsePlatformSetting, buildTowerData,
   calculateMultiplier, generateTransactionReference, validateStake
@@ -67,6 +68,8 @@ const startGame = async (req, res) => {
       description: `Tower Climb stake - ₦${stakeAmount.toLocaleString()}`,
       metadata: { game: 'tower_climb', round_id: round.id, stake_amount: stakeAmount, floors }
     });
+
+    await logActivity(userId, 'game_start', { game: 'tower_climb', round_id: round.id, stake_amount: stakeAmount }, req);
 
     // Return tower WITHOUT revealing trap positions to frontend
     const safeFloorData = floorData.map(f => ({
@@ -162,6 +165,9 @@ const revealTile = async (req, res) => {
           description: `Tower Climb win - reached top at ${newMulti}×`,
           metadata: { game: 'tower_climb', round_id, multiplier: newMulti, payout }
         });
+
+        await logActivity(userId, 'game_win', { game: 'tower_climb', round_id, payout_amount: payout, multiplier: newMulti, reached_floor: nextFloor }, req);
+
         return res.status(200).json({
           status: 'success',
           message: `You reached the TOP! ${newMulti}× 🏆 Won ₦${payout.toLocaleString()}`,

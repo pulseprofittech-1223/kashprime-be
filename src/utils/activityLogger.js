@@ -23,16 +23,24 @@ const logActivity = async (userId, actionType, metadata = {}, req = null) => {
     if (highRiskActions.includes(actionType)) severity = 'high';
     else if (mediumRiskActions.includes(actionType)) severity = 'medium';
 
+    const enrichedMetadata = {
+      amount: metadata.amount || null,
+      before_balance: metadata.before_balance || null,
+      after_balance: metadata.after_balance || null,
+      status: metadata.status || 'success',
+      restriction_reason: metadata.restriction_reason || null,
+      reference_id: metadata.reference_id || null,
+      device_info: metadata.device_info || userAgent || 'Unknown',
+      ...metadata,
+      severity: severity
+    };
+
     const { error } = await supabaseAdmin
       .from('kash_user_activities')
       .insert({
         user_id: userId,
         action_type: actionType,
-        metadata: {
-          ...metadata,
-          user_agent: userAgent,
-          severity: severity  
-        },
+        metadata: enrichedMetadata,
         ip_address: ipAddress,
         created_at: new Date().toISOString()
       });

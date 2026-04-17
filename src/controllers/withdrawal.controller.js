@@ -58,32 +58,67 @@ const createWithdrawalRequest = async (req, res) => {
     });
     const maxAmount = limitsMap['max_withdrawal_amount'] || 500000;
 
-    // Determine minimum withdrawal based on balance type and user tier
-    let minAmount;
-    if (balance_type === 'coins_balance') {
-      minAmount = userTier === 'Pro' 
-        ? (limitsMap['min_withdrawal_coins_pro'] || 15000)
-        : (limitsMap['min_withdrawal_coins_free'] || 30000);
-    } else if (balance_type === 'games_balance') {
-      minAmount = limitsMap['min_withdrawal_games'] || 1000;
-    } else if (balance_type === 'referral_balance') {
-      // MERCHANTS ONLY CHECK FOR REFERRAL WITHDRAWAL
-      if (user.role !== 'merchant') {
-        return res.status(403).json({
+    // Get user wallet FIRST to perform balance/limit checks
+    const { data: wallet, error: walletError } = await supabaseAdmin
+      .from('wallets')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+      
+    if (walletError || !wallet) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Wallet not found'
+      });
+    }
+
+    const isPro = userTier === 'Pro';
+    const currentBalance = parseFloat(wallet[balance_type] || 0);
+
+    // Strict Tier Limit Rules
+    if (['coins_balance', 'referral_balance'].includes(balance_type)) {
+      let limitThreshold = 0;
+      if (balance_type === 'coins_balance') {
+        limitThreshold = limitsMap['coins_withdrawal_threshold_amount'] || 40000;
+      } else if (balance_type === 'referral_balance') {
+        if (user.role !== 'merchant') {
+          return res.status(403).json({
+            status: 'error',
+            message: 'You must apply as a Merchant on your Referral page to withdraw referral earnings.'
+          });
+        }
+        limitThreshold = limitsMap['min_withdrawal_referral_amount'] || 2000;
+      }
+
+      if (currentBalance < limitThreshold) {
+        return res.status(400).json({
           status: 'error',
-          message: 'You must apply as a Merchant on your Referral page to withdraw referral earnings.'
+          message: 'Minimum withdrawal not reached'
         });
       }
 
-      minAmount = limitsMap['min_withdrawal_referral'] || 2500;
+      if (!isPro) {
+        return res.status(403).json({
+          status: 'error',
+          message: 'Upgrade to Pro to withdraw this balance.',
+          data: { restriction_reason: 'upgrade_required' }
+        });
+      }
+    }
+
+    // Determine normal minimum boundaries for valid operations
+    let minAmount = 1000;
+    if (balance_type === 'games_balance') {
+      minAmount = limitsMap['min_withdrawal_games'] || 1000;
     } else if (balance_type === 'investment_balance') {
       minAmount = limitsMap['min_withdrawal_investment'] || 3500;
     }
+
     // Validate amount
     if (amount < minAmount || amount > maxAmount) {
       return res.status(400).json({
         status: 'error',
-        message: `Withdrawal amount must be between ₦${minAmount.toLocaleString()} and ₦${maxAmount.toLocaleString()} for ${balance_type.replace('_', ' ')}`
+        message: `Withdrawal amount must be between ₦${minAmount.toLocaleString()} and ₦${maxAmount.toLocaleString()}`
       });
     }
 
@@ -104,18 +139,7 @@ const createWithdrawalRequest = async (req, res) => {
          });
       }
     }
-    // Get user wallet
-    const { data: wallet, error: walletError } = await supabaseAdmin
-      .from('wallets')
-      .select('*')
-      .eq('user_id', userId)
-      .single();
-    if (walletError || !wallet) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Wallet not found'
-      });
-    }
+
     // Enhanced account information validation
     if (!wallet.account_name || !wallet.bank_name || !wallet.account_number) {
       return res.status(400).json({
@@ -180,7 +204,6 @@ const createWithdrawalRequest = async (req, res) => {
       });
     }
     // Check sufficient balance for the selected balance type
-    const currentBalance = parseFloat(wallet[balance_type] || 0);
     if (currentBalance < amount) {
       return res.status(400).json({
         status: 'error',

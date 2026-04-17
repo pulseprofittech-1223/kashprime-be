@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require('../services/supabase.service');
+const { logActivity } = require('../utils/activityLogger');
 const crypto = require('crypto');
 const {
   parsePlatformSetting, getBothMultipliers,
@@ -126,6 +127,17 @@ const placeBet = async (req, res) => {
         ? [{ ...txBase, transaction_type: 'gaming', earning_type: 'higher_lower_win', amount: payout, reference: generateTransactionReference('WIN'), description: `H/L win - result ${resultNumber} was ${direction} than ${round.shown_number}`, metadata: { game: 'higher_lower', round_id, result_number: resultNumber, multiplier, payout } }]
         : [{ ...txBase, transaction_type: 'gaming', earning_type: 'higher_lower_loss', amount: -stakeAmount, reference: generateTransactionReference('LOSS'), description: `H/L loss - result ${resultNumber}`, metadata: { game: 'higher_lower', round_id, result_number: resultNumber } }])
     ]);
+
+    // Log Activity
+    await logActivity(userId, isWin ? 'game_win' : 'game_loss', {
+      game: 'higher_lower',
+      stake_amount: stakeAmount,
+      payout_amount: payout,
+      multiplier: multiplier,
+      direction: direction,
+      shown_number: round.shown_number,
+      result_number: resultNumber
+    }, req);
 
     return res.status(200).json({
       status:  isWin ? 'success' : 'error',

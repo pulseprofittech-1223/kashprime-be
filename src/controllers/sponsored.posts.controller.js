@@ -37,9 +37,8 @@ const getDailyStatus = async (req, res) => {
     }
 
     // Get daily limits from platform settings
-    const isPaidUser = ['Amateur', 'Pro'].includes(user.user_tier);
-    const limitKey = isPaidUser ? 'sponsored_daily_limit_paid' : 'sponsored_daily_limit_free';
-    const rewardKey = isPaidUser ? 'sponsored_reward_paid' : 'sponsored_reward_free';
+    const isPro = user.user_tier === 'Pro';
+    const limitKey = 'sponsored_daily_limit_free';
 
     const { data: limitSetting } = await supabaseAdmin
       .from('platform_settings')
@@ -47,14 +46,9 @@ const getDailyStatus = async (req, res) => {
       .eq('setting_key', limitKey)
       .single();
 
-    const { data: rewardSetting } = await supabaseAdmin
-      .from('platform_settings')
-      .select('setting_value')
-      .eq('setting_key', rewardKey)
-      .single();
-
-    const dailyLimit = parseInt(limitSetting?.setting_value || (isPaidUser ? 5 : 3));
-    const rewardAmount = parseFloat(rewardSetting?.setting_value || (isPaidUser ? 1000 : 500));
+    // Default limit is 2 for free users. Pro users bypass this check entirely.
+    const dailyLimit = parseInt(limitSetting?.setting_value || 2);
+    const rewardAmount = isPro ? 1000 : 500;
 
     // Get today's engagements
     const todayStart = new Date();
@@ -75,7 +69,7 @@ const getDailyStatus = async (req, res) => {
     }
 
     const engagedCount = todayEngagements?.length || 0;
-    const remainingEngagements = Math.max(0, dailyLimit - engagedCount);
+    const remainingEngagements = isPro ? null : Math.max(0, dailyLimit - engagedCount);
     const totalEarnedToday = todayEngagements?.reduce((sum, e) => sum + parseFloat(e.reward_amount), 0) || 0;
 
     // Get list of post IDs user has already engaged with (all time)
@@ -95,16 +89,18 @@ const getDailyStatus = async (req, res) => {
       message: 'Daily status retrieved successfully',
       data: {
         user_tier: user.user_tier,
-        daily_limit: dailyLimit,
+        daily_limit: isPro ? 'Unlimited' : dailyLimit,
         engaged_today: engagedCount,
-        remaining_engagements: remainingEngagements,
+        remaining_engagements: isPro ? 'Unlimited' : remainingEngagements,
+        limit_remaining: isPro ? 'Unlimited' : remainingEngagements,
         reward_per_post: rewardAmount,
         total_earned_today: totalEarnedToday,
-        potential_earnings: remainingEngagements * rewardAmount,
-        can_engage: remainingEngagements > 0,
+        potential_earnings: isPro ? 'Unlimited' : (remainingEngagements * rewardAmount),
+        can_engage: isPro || remainingEngagements > 0,
         engaged_post_ids: engagedPostIds,
         next_reset_time: nextResetTime.toISOString(),
-        today_engagements: todayEngagements || []
+        today_engagements: todayEngagements || [],
+        restriction_reason: (!isPro && remainingEngagements <= 0) ? 'limit_reached' : null
       }
     });
 
@@ -565,9 +561,8 @@ const engagePost = async (req, res) => {
     }
 
     // Get daily limit from platform settings
-    const isPaidUser = ['Amateur', 'Pro'].includes(user.user_tier);
-    const limitKey = isPaidUser ? 'sponsored_daily_limit_paid' : 'sponsored_daily_limit_free';
-    const rewardKey = isPaidUser ? 'sponsored_reward_paid' : 'sponsored_reward_free';
+    const isPro = user.user_tier === 'Pro';
+    const limitKey = 'sponsored_daily_limit_free';
 
     const { data: limitSetting } = await supabaseAdmin
       .from('platform_settings')
@@ -575,7 +570,7 @@ const engagePost = async (req, res) => {
       .eq('setting_key', limitKey)
       .single();
 
-    const dailyLimit = parseInt(limitSetting?.setting_value || (isPaidUser ? 5 : 3));
+    const dailyLimit = parseInt(limitSetting?.setting_value || 2);
 
     // Check if user has reached daily limit
     const todayStart = new Date();
@@ -587,26 +582,22 @@ const engagePost = async (req, res) => {
       .eq('user_id', userId)
       .gte('created_at', todayStart.toISOString());
 
-    if ((todayCount || 0) >= dailyLimit) {
-      return res.status(429).json({
+    if (!isPro && (todayCount || 0) >= dailyLimit) {
+      return res.status(403).json({
         status: 'error',
-        message: `You have reached your daily limit of ${dailyLimit} sponsored posts. Come back tomorrow!`,
+        message: `You have reached your daily limit of ${dailyLimit} sponsored posts. Upgrade to Pro for unlimited access!`,
         data: {
+          restriction_reason: 'limit_reached',
           daily_limit: dailyLimit,
           engaged_today: todayCount,
+          limit_remaining: 0,
           next_reset_time: new Date(new Date().setHours(24, 0, 0, 0)).toISOString()
         }
       });
     }
 
-    // Get reward amount
-    const { data: rewardSetting } = await supabaseAdmin
-      .from('platform_settings')
-      .select('setting_value')
-      .eq('setting_key', rewardKey)
-      .single();
-
-    const rewardAmount = parseFloat(rewardSetting?.setting_value || (isPaidUser ? 1000 : 500));
+    // Get reward amount Based on user Tier instead of settings (To keep it strict)
+    const rewardAmount = isPro ? 1000 : 500;
 
     // Update user's coins_balance
     const { data: wallet } = await supabaseAdmin
@@ -663,6 +654,7 @@ const engagePost = async (req, res) => {
       .eq('id', postId);
 
     // Log transaction
+    const referenceId = `SPONSORED_${Date.now()}_${userId.slice(-4).toUpperCase()}`;
     await supabaseAdmin.from('transactions').insert([
       {
         user_id: userId,
@@ -671,7 +663,7 @@ const engagePost = async (req, res) => {
         amount: rewardAmount,
         status: 'completed',
         description: `Sponsored post reward - ${post.title}`,
-        reference: `SPONSORED_${Date.now()}_${userId.slice(-4).toUpperCase()}`,
+        reference: referenceId,
         metadata: {
           post_id: postId,
           post_title: post.title
@@ -682,7 +674,11 @@ const engagePost = async (req, res) => {
     await logActivity(userId, 'sponsored_post_earn', {
        post_id: postId,
        post_title: post.title,
-       reward_amount: rewardAmount
+       amount: rewardAmount,
+       before_balance: parseFloat(wallet?.coins_balance || 0),
+       after_balance: newBalance,
+       reference_id: referenceId,
+       status: 'success'
     }, req);
 
     const newEngagedCount = (todayCount || 0) + 1;

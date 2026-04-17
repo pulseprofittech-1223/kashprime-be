@@ -8,8 +8,11 @@ const getKashAdsSettings = async () => {
     .select('setting_key, setting_value')
     .in('setting_key', [
       'kash_ads_reward_amount',
+      'kash_ads_reward_amount_free',
+      'kash_ads_reward_amount_pro',
       'kash_ads_clicks_required',
       'kash_ads_cooldown_hours',
+      'kash_ads_cooldown_hours_pro',
       'kash_ads_direct_link'
     ]);
 
@@ -41,9 +44,11 @@ const getKashAdsSettings = async () => {
     .map(l => l.replace(/^"|"$/g, '').replace(/^'|'$/g, ''));
 
   return {
-    rewardAmount: parseInt(settingsMap.kash_ads_reward_amount) || 500,
+    rewardAmountFree: parseInt(settingsMap.kash_ads_reward_amount_free || settingsMap.kash_ads_reward_amount) || 500,
+    rewardAmountPro: parseInt(settingsMap.kash_ads_reward_amount_pro) || 1000,
     clicksRequired: parseInt(settingsMap.kash_ads_clicks_required) || 5,
-    cooldownHours: parseInt(settingsMap.kash_ads_cooldown_hours) || 6,
+    cooldownHoursFree: parseInt(settingsMap.kash_ads_cooldown_hours) || 6,
+    cooldownHoursPro: parseInt(settingsMap.kash_ads_cooldown_hours_pro) || 4,
     directLinks: directLinks
   };
 };
@@ -52,7 +57,18 @@ const getKashAdsStatus = async (req, res) => {
   try {
     const userId = req.user.id;
     const settings = await getKashAdsSettings();
-    const { rewardAmount, clicksRequired, cooldownHours, directLinks } = settings;
+    const { rewardAmountFree, rewardAmountPro, clicksRequired, cooldownHoursFree, cooldownHoursPro, directLinks } = settings;
+
+    // Fetch user for tier info
+    const { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('user_tier')
+      .eq('id', userId)
+      .single();
+
+    if (userError) throw userError;
+    const isPro = user?.user_tier === 'Pro';
+    const dynamicReward = isPro ? rewardAmountPro : rewardAmountFree;
 
     let { data: kashAds, error } = await supabaseAdmin
       .from('kash_ads')
@@ -64,7 +80,11 @@ const getKashAdsStatus = async (req, res) => {
 
     const now = new Date();
     const lastRewardAt = kashAds.last_reward_at ? new Date(kashAds.last_reward_at) : null;
-    const cooldownEnd = lastRewardAt ? new Date(lastRewardAt.getTime() + (cooldownHours * 60 * 60 * 1000)) : null;
+    
+    // Both Free and Pro endure explicit cooldowns post-batch.
+    const activeCooldownHours = isPro ? cooldownHoursPro : cooldownHoursFree;
+    const cooldownEnd = lastRewardAt ? new Date(lastRewardAt.getTime() + (activeCooldownHours * 60 * 60 * 1000)) : null;
+    
     const isOnCooldown = cooldownEnd && now < cooldownEnd;
     
     let currentClicks = kashAds.clicks_count;
@@ -90,13 +110,15 @@ const getKashAdsStatus = async (req, res) => {
         clicks_count: currentClicks,
         clicks_required: clicksRequired,
         clicks_remaining: Math.max(0, clicksRequired - currentClicks),
-        reward_amount: rewardAmount,
-        cooldown_hours: cooldownHours,
+        reward_amount: dynamicReward,
+        user_tier: user?.user_tier || 'Free',
+        cooldown_hours: activeCooldownHours,
         direct_link: directLink,
         available_links_count: directLinks.length,
         is_on_cooldown: isOnCooldown,
-        cooldown_ends_at: cooldownEnd ? cooldownEnd.toISOString() : null,
-        time_remaining: timeRemaining,
+        cooldown_ends_at: isOnCooldown ? cooldownEnd.toISOString() : null,
+        cooldown_remaining: timeRemaining ? timeRemaining.total_seconds : 0,
+        restriction_reason: isOnCooldown ? 'cooldown' : null,
         can_click: !isOnCooldown && currentClicks < clicksRequired && !!directLink,
         can_claim: !isOnCooldown && currentClicks >= clicksRequired,
         total_rewards_claimed: kashAds.total_rewards_claimed,
@@ -113,7 +135,11 @@ const recordAdClick = async (req, res) => {
   try {
     const userId = req.user.id;
     const settings = await getKashAdsSettings();
-    const { rewardAmount, clicksRequired, cooldownHours } = settings;
+    const { rewardAmountFree, rewardAmountPro, clicksRequired, cooldownHoursFree, cooldownHoursPro } = settings;
+
+    const { data: user } = await supabaseAdmin.from('users').select('user_tier').eq('id', userId).single();
+    const isPro = user?.user_tier === 'Pro';
+    const dynamicReward = isPro ? rewardAmountPro : rewardAmountFree;
 
     let { data: kashAds, error } = await supabaseAdmin
       .from('kash_ads')
@@ -125,16 +151,17 @@ const recordAdClick = async (req, res) => {
 
     const now = new Date();
     const lastRewardAt = kashAds.last_reward_at ? new Date(kashAds.last_reward_at) : null;
-    const cooldownEnd = lastRewardAt ? new Date(lastRewardAt.getTime() + (cooldownHours * 60 * 60 * 1000)) : null;
+    const activeCooldownHours = isPro ? cooldownHoursPro : cooldownHoursFree;
+    const cooldownEnd = lastRewardAt ? new Date(lastRewardAt.getTime() + (activeCooldownHours * 60 * 60 * 1000)) : null;
     const isOnCooldown = cooldownEnd && now < cooldownEnd;
 
     if (isOnCooldown) {
       const remainingMs = cooldownEnd - now;
-      const hours = Math.floor(remainingMs / (1000 * 60 * 60));
-      const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
-      
-      return res.status(400).json(
-        formatResponse('error', `You're on cooldown. Come back in ${hours}h ${minutes}m`, {
+      const totalSeconds = Math.floor(remainingMs / 1000);
+      return res.status(403).json(
+        formatResponse('error', `You are on cooldown. Wait for it to expire or upgrade to Pro!`, {
+          restriction_reason: 'cooldown',
+          cooldown_remaining: totalSeconds,
           cooldown_ends_at: cooldownEnd.toISOString()
         })
       );
@@ -170,7 +197,7 @@ const recordAdClick = async (req, res) => {
         clicks_required: clicksRequired,
         clicks_remaining: Math.max(0, clicksRequired - newClickCount),
         can_claim: canClaim,
-        reward_amount: rewardAmount
+        reward_amount: dynamicReward
       })
     );
   } catch (error) {
@@ -183,7 +210,11 @@ const claimKashAdsReward = async (req, res) => {
   try {
     const userId = req.user.id;
     const settings = await getKashAdsSettings();
-    const { rewardAmount, clicksRequired, cooldownHours } = settings;
+    const { rewardAmountFree, rewardAmountPro, clicksRequired, cooldownHoursFree, cooldownHoursPro } = settings;
+
+    const { data: user } = await supabaseAdmin.from('users').select('user_tier').eq('id', userId).single();
+    const isPro = user?.user_tier === 'Pro';
+    const dynamicReward = isPro ? rewardAmountPro : rewardAmountFree;
 
     const { data: kashAds, error } = await supabaseAdmin
       .from('kash_ads')
@@ -197,12 +228,19 @@ const claimKashAdsReward = async (req, res) => {
 
     const now = new Date();
     const lastRewardAt = kashAds.last_reward_at ? new Date(kashAds.last_reward_at) : null;
-    const cooldownEnd = lastRewardAt ? new Date(lastRewardAt.getTime() + (cooldownHours * 60 * 60 * 1000)) : null;
+    const activeCooldownHours = isPro ? cooldownHoursPro : cooldownHoursFree;
+    const cooldownEnd = lastRewardAt ? new Date(lastRewardAt.getTime() + (activeCooldownHours * 60 * 60 * 1000)) : null;
     const isOnCooldown = cooldownEnd && now < cooldownEnd;
 
     if (isOnCooldown) {
-      return res.status(400).json(
-        formatResponse('error', 'You are still on cooldown', { cooldown_ends_at: cooldownEnd.toISOString() })
+      const remainingMs = cooldownEnd - now;
+      const totalSeconds = Math.floor(remainingMs / 1000);
+      return res.status(403).json(
+        formatResponse('error', 'You are still on cooldown', { 
+           restriction_reason: 'cooldown',
+           cooldown_remaining: totalSeconds,
+           cooldown_ends_at: cooldownEnd.toISOString() 
+        })
       );
     }
 
@@ -212,7 +250,29 @@ const claimKashAdsReward = async (req, res) => {
       );
     }
 
-    // Check user wallet
+    // Concurrency Lock: Atomic deduction FIRST
+    // Use original click count ensuring it matches our memory, preventing concurrent claim processing
+    const { data: updatedKashAds, error: kashUpdateError } = await supabaseAdmin
+      .from('kash_ads')
+      .update({
+        clicks_count: 0,
+        last_reward_at: now.toISOString(),
+        total_rewards_claimed: kashAds.total_rewards_claimed + 1,
+        total_coins_earned: parseFloat(kashAds.total_coins_earned || 0) + dynamicReward,
+        updated_at: now.toISOString()
+      })
+      .eq('user_id', userId)
+      .eq('clicks_count', kashAds.clicks_count) // explicit optimistic locking
+      .select();
+
+    if (kashUpdateError) throw kashUpdateError;
+
+    // Verify optimistic lock successfully grabbed the row
+    if (!updatedKashAds || updatedKashAds.length === 0) {
+      return res.status(409).json(formatResponse('error', 'Reward already claimed or concurrent request conflict.'));
+    }
+
+    // Now safely issue wallet credits 
     const { data: wallet, error: walletError } = await supabaseAdmin
       .from('wallets')
       .select('coins_balance')
@@ -221,7 +281,7 @@ const claimKashAdsReward = async (req, res) => {
 
     if (walletError) throw walletError;
 
-    const newBalance = parseFloat(wallet.coins_balance || 0) + rewardAmount;
+    const newBalance = parseFloat(wallet.coins_balance || 0) + dynamicReward;
 
     const { error: walletUpdateError } = await supabaseAdmin
       .from('wallets')
@@ -237,46 +297,39 @@ const claimKashAdsReward = async (req, res) => {
         user_id: userId,
         transaction_type: 'reward',
         balance_type: 'coins_balance',
-        amount: rewardAmount,
+        amount: dynamicReward,
         status: 'completed',
         reference: reference,
         description: `Kash Ads reward - Watched ${clicksRequired} ads`,
         metadata: {
           feature: 'kash_ads',
-          clicks_completed: clicksRequired,
+          clicks_completed: kashAds.clicks_count,
           claim_number: kashAds.total_rewards_claimed + 1,
-          reward_amount: rewardAmount
+          reward_amount_issued: dynamicReward,
+          user_tier: user?.user_tier
         }
       });
 
     if (transactionError) throw transactionError;
 
-    const { error: kashUpdateError } = await supabaseAdmin
-      .from('kash_ads')
-      .update({
-        clicks_count: 0,
-        last_reward_at: now.toISOString(),
-        total_rewards_claimed: kashAds.total_rewards_claimed + 1,
-        total_coins_earned: parseFloat(kashAds.total_coins_earned || 0) + rewardAmount,
-        updated_at: now.toISOString()
-      })
-      .eq('user_id', userId);
-
     if (kashUpdateError) throw kashUpdateError;
 
-    // Log Activity
-    await logActivity(userId, 'ad_reward_claim', { reward_amount: rewardAmount }, req);
+    // Log Activity with deep tracking
+    await logActivity(userId, 'ad_reward_claim', { 
+        reward_amount: dynamicReward,
+        reference_id: reference 
+    }, req);
 
-    const nextAvailableAt = new Date(now.getTime() + (cooldownHours * 60 * 60 * 1000));
+    const nextAvailableAt = new Date(now.getTime() + (activeCooldownHours * 60 * 60 * 1000));
 
     res.status(200).json(
-      formatResponse('success', `🎉 You earned ${rewardAmount} KashCoins!`, {
-        reward_amount: rewardAmount,
+      formatResponse('success', `🎉 You earned ${dynamicReward} KashCoins!`, {
+        reward_amount: dynamicReward,
         new_coins_balance: newBalance,
         next_available_at: nextAvailableAt.toISOString(),
-        cooldown_hours: cooldownHours,
+        cooldown_hours: isPro ? 0 : activeCooldownHours,
         total_rewards_claimed: kashAds.total_rewards_claimed + 1,
-        total_coins_earned: parseFloat(kashAds.total_coins_earned || 0) + rewardAmount
+        total_coins_earned: parseFloat(kashAds.total_coins_earned || 0) + dynamicReward
       })
     );
   } catch (error) {

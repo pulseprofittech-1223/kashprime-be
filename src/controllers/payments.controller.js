@@ -1,6 +1,7 @@
 const { supabaseAdmin } = require('../services/supabase.service');
 require("dotenv").config();
 const crypto = require('crypto');
+const { logActivity } = require('../utils/activityLogger');
 
 const paystack = require('paystack')(process.env.PAYSTACK_SECRET_KEY);
 
@@ -438,6 +439,16 @@ class PaymentController {
     // Fire-and-forget referral commission
     PaymentController.processReferralCommission(userId, paidAmount, reference);
 
+    // Log Activity
+    await logActivity(userId, 'deposit_complete', {
+       amount: paidAmount,
+       balance_type: 'games_balance',
+       before_balance: parseFloat(currentWallet.games_balance || 0),
+       after_balance: newBalance,
+       reference_id: reference,
+       status: 'success'
+    });
+
     return {
       new_games_balance: newBalance,
       wallet_type: 'gaming'
@@ -555,6 +566,14 @@ class PaymentController {
 
     // Fire-and-forget referral commission
     PaymentController.processReferralCommission(userId, capitalAmount, reference);
+
+    // Log Activity
+    await logActivity(userId, 'investment_start', {
+       amount: capitalAmount,
+       plan_name: planName,
+       reference_id: reference,
+       status: 'success'
+    });
 
     return {
       investment: {
@@ -676,6 +695,15 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
       created_at: new Date().toISOString()
     });
 
+    // Log Activity
+    await logActivity(userId, 'tier_upgrade', {
+       amount: paidAmount,
+       bonus_awarded: upgradeBonus,
+       new_tier: 'Pro',
+       reference_id: reference,
+       status: 'success'
+    });
+
   return responseData;
 }
 
@@ -696,6 +724,13 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
         metadata: verificationData,
         created_at: new Date().toISOString()
       });
+
+    // Log Activity
+    await logActivity(userId, 'ad_payment', {
+       amount: paidAmount,
+       reference_id: reference,
+       status: 'success'
+    });
 
     return {
       success: true,

@@ -82,8 +82,8 @@ const claimVideoReward = async (req, res) => {
       .gte('claimed_at', todayStart.toISOString());
 
     // Get daily limits from settings
-    const isPaidUser = ['Amateur', 'Pro'].includes(user.user_tier);
-    const limitKey = isPaidUser ? 'kashskit_daily_limit_paid' : 'kashskit_daily_limit_free';
+    const isPro = user.user_tier === 'Pro';
+    const limitKey = 'kashskit_daily_limit_free';
 
     const { data: limitSetting } = await supabaseAdmin
       .from('platform_settings')
@@ -91,25 +91,23 @@ const claimVideoReward = async (req, res) => {
       .eq('setting_key', limitKey)
       .single();
 
-    const dailyLimit = parseInt(limitSetting?.setting_value || (isPaidUser ? 5 : 3));
+    const dailyLimit = parseInt(limitSetting?.setting_value || 2);
 
-    if (todayClaims && todayClaims.length >= dailyLimit) {
-      return res.status(429).json({
+    if (!isPro && todayClaims && todayClaims.length >= dailyLimit) {
+      return res.status(403).json({
         status: 'error',
-        message: `Daily claim limit of ${dailyLimit} videos reached. Come back tomorrow!`
+        message: `Daily claim limit of ${dailyLimit} videos reached. Upgrade to Pro for unlimited access!`,
+        data: {
+          restriction_reason: 'limit_reached',
+          daily_limit: dailyLimit,
+          claims_today: todayClaims.length,
+          limit_remaining: 0
+        }
       });
     }
 
-    // Get reward amount based on user tier
-    const rewardKey = isPaidUser ? 'kashskit_reward_paid' : 'kashskit_reward_free';
-
-    const { data: rewardSetting } = await supabaseAdmin
-      .from('platform_settings')
-      .select('setting_value')
-      .eq('setting_key', rewardKey)
-      .single();
-
-    const rewardAmount = parseFloat(rewardSetting?.setting_value || (isPaidUser ? 1000 : 500));
+    // Get reward amount based on user tier rigidly mapped
+    const rewardAmount = isPro ? 1000 : 500;
 
     // Create claim record
     const { data: claim, error: claimError } = await supabaseAdmin
@@ -665,7 +663,7 @@ const getDailyStatus = async (req, res) => {
       .eq('id', userId)
       .single();
 
-    const isPaidUser = ['Amateur', 'Pro'].includes(user?.user_tier);
+    const isPro = user?.user_tier === 'Pro';
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -676,8 +674,7 @@ const getDailyStatus = async (req, res) => {
       .eq('user_id', userId)
       .gte('claimed_at', todayStart.toISOString());
 
-    const limitKey = isPaidUser ? 'kashskit_daily_limit_paid' : 'kashskit_daily_limit_free';
-    const rewardKey = isPaidUser ? 'kashskit_reward_paid' : 'kashskit_reward_free';
+    const limitKey = 'kashskit_daily_limit_free';
 
     const { data: limitSetting } = await supabaseAdmin
       .from('platform_settings')
@@ -685,25 +682,22 @@ const getDailyStatus = async (req, res) => {
       .eq('setting_key', limitKey)
       .single();
 
-    const { data: rewardSetting } = await supabaseAdmin
-      .from('platform_settings')
-      .select('setting_value')
-      .eq('setting_key', rewardKey)
-      .single();
-
-    const dailyLimit = parseInt(limitSetting?.setting_value || (isPaidUser ? 5 : 3));
-    const rewardAmount = parseFloat(rewardSetting?.setting_value || (isPaidUser ? 1000 : 500));
+    const dailyLimit = parseInt(limitSetting?.setting_value || 2);
+    const rewardAmount = isPro ? 1000 : 500;
     const claimsToday = todayClaims?.length || 0;
+    const remainingClaims = isPro ? null : Math.max(0, dailyLimit - claimsToday);
 
     return res.status(200).json({
       status: 'success',
       message: 'Daily status retrieved',
       data: {
         claims_today: claimsToday,
-        daily_limit: dailyLimit,
-        remaining_claims: Math.max(0, dailyLimit - claimsToday),
-        can_claim_more: claimsToday < dailyLimit,
+        daily_limit: isPro ? 'Unlimited' : dailyLimit,
+        remaining_claims: isPro ? 'Unlimited' : remainingClaims,
+        limit_remaining: isPro ? 'Unlimited' : remainingClaims,
+        can_claim_more: isPro || claimsToday < dailyLimit,
         reward_per_video: rewardAmount,
+        restriction_reason: (!isPro && claimsToday >= dailyLimit) ? 'limit_reached' : null
       }
     });
   } catch (error) {

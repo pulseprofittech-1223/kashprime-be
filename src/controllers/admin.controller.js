@@ -1607,6 +1607,69 @@ const getDashboardStats = async (req, res) => {
     const pendingCount = pendingWithdrawals?.length || 0;
     const pendingAmount = pendingWithdrawals?.reduce((sum, tx) => sum + Math.abs(parseFloat(tx.amount)), 0) || 0;
 
+    // 3. Exact Revenue Breakdown (Free vs Pro)
+    // Fetch all relevant completed transactions
+    const { data: completedTx } = await supabaseAdmin
+      .from('transactions')
+      .select('user_id, transaction_type, earning_type, amount')
+      .eq('status', 'completed');
+    
+    const userTierMap = {};
+    users.forEach(u => {
+      userTierMap[u.id] = u.user_tier || 'Free';
+    });
+
+    const revenue_by_plan = {
+      Pro: { deposits: 0, payouts: 0, game_house_edge: 0, ad_revenue: 0, bonuses: 0, referrals: 0, net_revenue: 0 },
+      Amateur: { deposits: 0, payouts: 0, game_house_edge: 0, ad_revenue: 0, bonuses: 0, referrals: 0, net_revenue: 0 },
+      Free: { deposits: 0, payouts: 0, game_house_edge: 0, ad_revenue: 0, bonuses: 0, referrals: 0, net_revenue: 0 }
+    };
+
+    let totalPlatformRevenue = 0;
+
+    (completedTx || []).forEach(tx => {
+      const tier = userTierMap[tx.user_id] || 'Free';
+      const amt = parseFloat(tx.amount) || 0;
+      
+      if (!revenue_by_plan[tier]) return;
+
+      if (tx.transaction_type === 'deposit' || tx.transaction_type === 'subscription') {
+        revenue_by_plan[tier].deposits += amt;
+        totalPlatformRevenue += amt;
+      } else if (tx.transaction_type === 'withdrawal') {
+        revenue_by_plan[tier].payouts += Math.abs(amt);
+        totalPlatformRevenue -= Math.abs(amt);
+      } else if (tx.transaction_type === 'gaming') {
+        if (amt < 0) {
+           revenue_by_plan[tier].game_house_edge += Math.abs(amt); // User loss = house profit
+           totalPlatformRevenue += Math.abs(amt);
+        } else if (amt > 0) {
+           revenue_by_plan[tier].game_house_edge -= amt; // User win = house loss
+           totalPlatformRevenue -= amt;
+        }
+      } else if (tx.transaction_type === 'ad_payment' || tx.transaction_type === 'sponsored_post_payment') {
+        revenue_by_plan[tier].ad_revenue += amt;
+        totalPlatformRevenue += amt;
+      } else if (tx.transaction_type === 'reward' || tx.transaction_type === 'bonus') {
+        revenue_by_plan[tier].bonuses += Math.abs(amt);
+        totalPlatformRevenue -= Math.abs(amt);
+      } else if (tx.transaction_type === 'referral_bonus' || tx.transaction_type === 'referral') {
+        revenue_by_plan[tier].referrals += Math.abs(amt);
+        totalPlatformRevenue -= Math.abs(amt);
+      }
+    });
+
+    // Calculate Nets using exact rules: Deposits + House Edge + Ad Revenue - Withdrawals - Bonuses - Referrals
+    Object.keys(revenue_by_plan).forEach(tier => {
+       revenue_by_plan[tier].net_revenue = 
+          revenue_by_plan[tier].deposits + 
+          revenue_by_plan[tier].game_house_edge +
+          revenue_by_plan[tier].ad_revenue - 
+          revenue_by_plan[tier].payouts -
+          revenue_by_plan[tier].bonuses -
+          revenue_by_plan[tier].referrals;
+    });
+
     // 3. Wallet Analytics (Balance Breakdown)
     const { data: wallets, error: walletError } = await supabaseAdmin
       .from('wallets')
@@ -1650,6 +1713,10 @@ const getDashboardStats = async (req, res) => {
         withdrawals: {
           pending_count: pendingCount,
           pending_amount: pendingAmount
+        },
+        revenue: {
+          total_platform_net: totalPlatformRevenue,
+          by_plan: revenue_by_plan
         },
         balance_growth: {
           combined_balance: combinedBalance,
@@ -2246,21 +2313,38 @@ const getActivityAnalytics = async (req, res) => {
        prev_count: prevValidActivities.filter(pa => pa.action_type === type).length
     }));
 
-    // 6. Overtime Trends
+    // 6. Overtime Trends (Chronological labels)
     const overtime = [];
+    const labelsMap = new Map();
+
     if (timeframe === 'daily') {
-       for(let i=0; i<24; i++) overtime.push({ label: `${i}:00`, count: 0 });
+       // Last 24 hours starting from current hour
+       for(let i=23; i>=0; i--) {
+          const d = new Date(now);
+          d.setHours(d.getHours() - i);
+          const label = `${d.getHours()}:00`;
+          const key = timeframe + '_' + label; // Unique key for matching
+          overtime.push({ label, count: 0, key });
+          labelsMap.set(label, overtime[overtime.length - 1]);
+       }
     } else {
-       for(let i=(timeframe==='weekly'?6:29); i>=0; i--) {
-          const d = new Date(); d.setDate(d.getDate() - i);
-          overtime.push({ label: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }), count: 0 });
+       const daysToFetch = timeframe === 'weekly' ? 6 : 29;
+       for(let i=daysToFetch; i>=0; i--) {
+          const d = new Date(now);
+          d.setDate(d.getDate() - i);
+          const label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+          overtime.push({ label, count: 0 });
+          labelsMap.set(label, overtime[overtime.length - 1]);
        }
     }
 
     validActivities.forEach(act => {
       const dt = new Date(act.created_at);
-      let lb = timeframe === 'daily' ? dt.getHours() + ':00' : dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-      const bin = overtime.find(x => x.label === lb);
+      let lb = timeframe === 'daily' 
+        ? dt.getHours() + ':00' 
+        : dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+      
+      const bin = labelsMap.get(lb);
       if (bin) bin.count += 1;
     });
 

@@ -46,7 +46,7 @@ const register = async (req, res) => {
     
     if (error.message.includes('EMAIL_EXISTS')) {
       errorMessage = 'This email address is already registered. Please use a different email or try logging in.';
-    } else if (error.message.includes('USERNAME_EXISTS')) {
+    } else if (error.message.includes('USERNAME_EXISTS') || error.message.includes('users_username_key') || error.message.includes('users_referral_code_key')) {
       errorMessage = 'This username is already taken. Please choose a different username.';
     } else if (error.message) {
       errorMessage = error.message;

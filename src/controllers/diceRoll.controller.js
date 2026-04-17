@@ -8,6 +8,7 @@ const {
   generateTransactionReference,
   VALID_BET_TYPES,
 } = require('../utils/helpers/diceRoll.helpers');
+const { logActivity } = require('../utils/activityLogger');
   
 const getSettings = async (req, res) => {
   try {
@@ -147,7 +148,6 @@ const playGame = async (req, res) => {
       description: `Dice Roll stake - ₦${stakeAmount.toLocaleString()}`,
       metadata: { game: 'dice_roll', round_id: round?.id, bet_type, bet_value: betVal, stake_amount: stakeAmount },
     });
-
     if (isWin) {
       await supabaseAdmin.from('transactions').insert({
         user_id: userId,
@@ -161,6 +161,15 @@ const playGame = async (req, res) => {
         metadata: { game: 'dice_roll', round_id: round?.id, multiplier, payout },
       });
     }
+
+    // Log Activity
+    await logActivity(userId, isWin ? 'game_win' : 'game_loss', {
+      game: 'dice_roll',
+      stake_amount: stakeAmount,
+      payout_amount: payout,
+      multiplier: multiplier,
+      bet_type: bet_type
+    }, req);
 
     return res.status(200).json({
       status:  isWin ? 'success' : 'error',

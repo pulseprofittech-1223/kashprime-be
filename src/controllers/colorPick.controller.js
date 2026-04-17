@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require('../services/supabase.service');
+const { logActivity } = require('../utils/activityLogger');
 const {
   DEFAULT_MULTIPLIERS, DEFAULT_WEIGHTS, VALID_COLORS,
   parsePlatformSetting, generateColorResult, generateTransactionReference, validateStake
@@ -86,6 +87,16 @@ const playGame = async (req, res) => {
         ? [{ ...txBase, transaction_type: 'gaming', earning_type: 'color_pick_win', amount: payout, reference: generateTransactionReference('WIN'), description: `Color Pick win - ${drawnColor} at ${multiplier}×`, metadata: { game: 'color_pick', round_id: round?.id, drawn_color: drawnColor, multiplier, payout } }]
         : [{ ...txBase, transaction_type: 'gaming', earning_type: 'color_pick_loss', amount: -stakeAmount, reference: generateTransactionReference('LOSS'), description: `Color Pick loss - drew ${drawnColor}`, metadata: { game: 'color_pick', round_id: round?.id, drawn_color: drawnColor } }])
     ]);
+
+    // Log Activity
+    await logActivity(userId, isWin ? 'game_win' : 'game_loss', {
+      game: 'color_pick',
+      player_choice: player_choice,
+      drawn_color: drawnColor,
+      stake_amount: stakeAmount,
+      payout_amount: payout,
+      multiplier: multiplier
+    }, req);
 
     return res.status(200).json({
       status: isWin ? 'success' : 'error',
