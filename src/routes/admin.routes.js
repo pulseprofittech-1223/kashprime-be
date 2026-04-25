@@ -244,4 +244,12 @@ router.get('/merchants/code-analytics', adminController.getMerchantCodeAnalytics
  */
 router.get('/merchants/:merchantId', adminController.getMerchantDetail);
 
+/**
+ * POST /api/admin/merchants/:merchantId/load-vending-balance
+ * Load vending balance specifically for a merchant
+ */
+router.post('/merchants/:merchantId/load-vending-balance', [
+  body('amount').isFloat({ min: 1 })
+], adminController.loadVendingBalance);
+
 module.exports = router;

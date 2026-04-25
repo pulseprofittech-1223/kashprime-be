@@ -52,7 +52,7 @@ const registerUser = async (userData) => {
       const { data: referrer } = await supabaseAdmin
         .from("users")
         .select("id, username, referred_by")
-        .eq("referral_code", referral.toUpperCase())
+        .eq("referral_code", referral.toLowerCase())
         .single();
 
       if (referrer) {
@@ -479,24 +479,38 @@ const updatePassword = async (userId, currentPassword, newPassword) => {
 // Get user referrals
 const getUserReferrals = async (userId) => {
   try {
-    // Get direct referrals
-    const { data: directReferrals } = await supabaseAdmin
-      .from('referrals')
-      .select(`
-        *,
-        referred:users!referrals_referred_id_fkey(
-          id, username, full_name, user_tier, created_at
-        )
-      `)
-      .eq('referrer_id', userId)
+    // Get direct referrals from users table directly for truthiness
+    const { data: referredUsers } = await supabaseAdmin
+      .from('users')
+      .select('id, username, full_name, user_tier, created_at')
+      .eq('referred_by', userId)
       .order('created_at', { ascending: false });
 
-    // Calculate total earnings
-    const totalEarnings = directReferrals?.reduce((sum, ref) => 
-      sum + parseFloat(ref.reward_amount), 0) || 0;
+    // Get referral rewards directly from successful transactions for 100% accuracy
+    const { data: rewardTransactions, error: rewardError } = await supabaseAdmin
+      .from('transactions')
+      .select('amount, metadata')
+      .eq('user_id', userId)
+      .eq('transaction_type', 'reward')
+      .eq('balance_type', 'referral_balance')
+      .eq('status', 'completed');
 
-    // Get total deposits for each referred user
-    const referredIds = directReferrals?.map(ref => ref.referred.id) || [];
+    if (rewardError) console.error('Error fetching rewards:', rewardError);
+
+    // Create a map of reward amounts per user
+    const rewardMap = {};
+    let totalEarnings = 0;
+    
+    rewardTransactions?.forEach(t => {
+      // Look for the source user ID in metadata
+      const sourceId = t.metadata?.referred_user_id;
+      if (sourceId) {
+        rewardMap[sourceId] = (rewardMap[sourceId] || 0) + parseFloat(t.amount || 0);
+      }
+      totalEarnings += parseFloat(t.amount || 0);
+    });
+
+    const referredIds = referredUsers?.map(user => user.id) || [];
     let userDeposits = {};
     
     if (referredIds.length > 0) {
@@ -513,16 +527,16 @@ const getUserReferrals = async (userId) => {
     }
 
     return {
-      direct_referrals: directReferrals?.map(ref => ({
-        id: ref.referred.id,
-        username: ref.referred.username,
-        full_name: ref.referred.full_name,
-        user_tier: ref.referred.user_tier,
-        reward_amount: ref.reward_amount,
-        created_at: ref.created_at,
-        total_deposits: userDeposits[ref.referred.id] || 0
+      direct_referrals: referredUsers?.map(user => ({
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name,
+        user_tier: user.user_tier,
+        reward_amount: rewardMap[user.id] || 0,
+        created_at: user.created_at,
+        total_deposits: userDeposits[user.id] || 0
       })) || [],
-      total_referrals: directReferrals?.length || 0,
+      total_referrals: referredUsers?.length || 0,
       total_earnings: totalEarnings
     };
 

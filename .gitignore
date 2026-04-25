@@ -12,3 +12,5 @@ test-keno-tx.js
 test-keno.js
 db/migrations/20250117_kash_ads_enhancement.sql
 scratch/test_logging.js
+*.sql
+/scratch

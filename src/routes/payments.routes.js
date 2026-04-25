@@ -65,7 +65,7 @@ const transactionHistoryValidation = [
     .optional()
     .isIn(['gaming', 'investment', 'upgrade'])
     .withMessage('Invalid purpose')
-];
+];   
 
 const adminTransactionValidation = [
   query('page')
@@ -80,7 +80,7 @@ const adminTransactionValidation = [
   
   query('purpose')
     .optional()
-    .isIn(['gaming', 'investment', 'upgrade'])
+    .isIn(['gaming', 'investment', 'upgrade', 'kash_ads'])
     .withMessage('Invalid purpose'),
   
   query('status')
@@ -107,25 +107,61 @@ const adminTransactionValidation = [
 // User Routes
 
 /**
+ * @route   GET /api/payments/settings
+ * @desc    Get public payment gateway settings
+ * @access  Public
+ */
+router.get('/settings',
+  PaymentController.getPublicSettings
+);
+
+/**
  * @route   POST /api/payments/initialize
- * @desc    Initialize payment with Paystack (gaming, investment, or upgrade)
+ * @desc    Initialize payment with Paystack or Flutterwave
  * @access  Private
  */
 router.post('/initialize',
   authMiddleware,
-  initializePaymentValidation,
+  [
+    body('amount').isFloat({ min: 50 }).withMessage('Minimum deposit amount is ₦50'),
+    body('email').optional().isEmail().withMessage('Valid email is required'),
+    body('purpose').notEmpty().isIn(['gaming', 'investment', 'upgrade', 'kash_ads']),
+    body('gateway').optional().isIn(['paystack', 'flutterwave'])
+  ],
   PaymentController.initializePayment
 );
 
 /**
  * @route   POST /api/payments/verify
- * @desc    Verify Paystack payment and credit appropriate wallet
+ * @desc    Verify payment and credit appropriate wallet
  * @access  Private
  */
 router.post('/verify', 
   authMiddleware,
-  paymentValidation,
+  [
+    body('reference').notEmpty(),
+    body('amount').isFloat({ min: 50 }),
+    body('purpose').notEmpty().isIn(['gaming', 'investment', 'upgrade', 'kash_ads']),
+    body('gateway').optional().isIn(['paystack', 'flutterwave']),
+    body('flw_transaction_id').optional()
+  ],
   PaymentController.verifyPayment
+);
+
+/**
+ * @route   POST /api/payments/flutterwave/verify
+ * @desc    Dedicated Flutterwave payment verification
+ * @access  Private
+ */
+router.post('/flutterwave/verify',
+  authMiddleware,
+  [
+    body('transaction_id').notEmpty().withMessage('Transaction ID is required'),
+    body('tx_ref').notEmpty().withMessage('Transaction reference is required'),
+    body('amount').isFloat({ min: 50 }).withMessage('Valid amount is required'),
+    body('purpose').notEmpty().isIn(['gaming', 'investment', 'upgrade', 'kash_ads'])
+  ],
+  PaymentController.verifyFlutterwavePayment
 );
 
 const redeemValidation = [

@@ -80,6 +80,17 @@ const getDashboard = async (req, res) => {
     const pendingReferrals = referralStats?.filter(r => r.status === 'pending').length || 0;
     const activeReferrals = referralStats?.filter(r => r.status === 'active').length || 0;
 
+    // Calculate total referral earnings directly from transactions for accuracy
+    const { data: rewardTransactions } = await supabaseAdmin
+      .from('transactions')
+      .select('amount')
+      .eq('user_id', userId)
+      .eq('transaction_type', 'reward')
+      .eq('balance_type', 'referral_balance')
+      .eq('status', 'completed');
+      
+    const totalReferralEarnings = rewardTransactions?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
+
     const { data: recentTransactions } = await supabaseAdmin
       .from('transactions')
       .select('*')
@@ -132,7 +143,8 @@ const getDashboard = async (req, res) => {
       referral_stats: {
         pending_referrals: pendingReferrals,
         active_referrals: activeReferrals,
-        total_referrals: (pendingReferrals + activeReferrals)
+        total_referrals: (pendingReferrals + activeReferrals),
+        total_earnings: totalReferralEarnings
       },
       recent_transactions: enhancedTransactions,
       platform_settings: settingsObj
@@ -722,6 +734,118 @@ const getPublicSettings = async (req, res) => {
   }
 };
 
+const transferVendingBalance = async (req, res) => {
+  try {
+    const merchantId = req.user.id;
+    const { username, amount } = req.body;
+
+    if (!username || !amount || isNaN(amount) || amount <= 0) {
+      return res.status(400).json(formatResponse('error', 'Valid username and amount are required.'));
+    }
+
+    // Verify the recipient user
+    const { data: recipient, error: recipientErr } = await supabaseAdmin
+      .from('users')
+      .select('id, username')
+      .eq('username', username.toLowerCase())
+      .single();
+
+    if (recipientErr || !recipient) {
+      return res.status(404).json(formatResponse('error', 'Recipient user not found.'));
+    }
+
+    if (recipient.id === merchantId) {
+      return res.status(400).json(formatResponse('error', 'Cannot transfer to yourself.'));
+    }
+
+    // Check merchant's vending balance
+    const { data: merchantWallet, error: mwErr } = await supabaseAdmin
+      .from('wallets')
+      .select('id, vending_balance, total_transferred_vending')
+      .eq('user_id', merchantId)
+      .single();
+
+    if (mwErr || !merchantWallet) {
+      return res.status(500).json(formatResponse('error', 'Merchant wallet not found.'));
+    }
+
+    const currentVending = parseFloat(merchantWallet.vending_balance || 0);
+    const transferAmount = parseFloat(amount);
+
+    if (currentVending < transferAmount) {
+      return res.status(400).json(formatResponse('error', 'Insufficient vending balance.'));
+    }
+
+    // Check recipient's games balance
+    const { data: recipientWallet, error: rwErr } = await supabaseAdmin
+      .from('wallets')
+      .select('id, games_balance')
+      .eq('user_id', recipient.id)
+      .single();
+
+    if (rwErr || !recipientWallet) {
+      return res.status(500).json(formatResponse('error', 'Recipient wallet not found.'));
+    }
+
+    // Deduct from merchant
+    const newMerchantVending = currentVending - transferAmount;
+    const newTotalTransferred = parseFloat(merchantWallet.total_transferred_vending || 0) + transferAmount;
+
+    await supabaseAdmin
+      .from('wallets')
+      .update({
+        vending_balance: newMerchantVending,
+        total_transferred_vending: newTotalTransferred
+      })
+      .eq('user_id', merchantId);
+
+    // Credit to recipient's games balance
+    const newRecipientGames = parseFloat(recipientWallet.games_balance || 0) + transferAmount;
+
+    await supabaseAdmin
+      .from('wallets')
+      .update({ games_balance: newRecipientGames })
+      .eq('user_id', recipient.id);
+
+    // Record transactions
+    // 1. Merchant Debit
+    await supabaseAdmin
+      .from('transactions')
+      .insert({
+        user_id: merchantId,
+        amount: -transferAmount,
+        currency: 'NGN',
+        transaction_type: 'transfer_out',
+        status: 'completed',
+        description: `Transferred vending balance to @${recipient.username}`,
+        reference: `VEND-TXOUT-${Date.now()}`,
+        balance_type: 'vending_balance'
+      });
+
+    // 2. Recipient Credit
+    await supabaseAdmin
+      .from('transactions')
+      .insert({
+        user_id: recipient.id,
+        amount: transferAmount,
+        currency: 'NGN',
+        transaction_type: 'transfer_in',
+        status: 'completed',
+        description: `Received game balance from @${req.user.username}`,
+        reference: `VEND-TXIN-${Date.now()}`,
+        balance_type: 'games_balance'
+      });
+
+    return res.status(200).json(formatResponse('success', `Successfully transferred ₦${transferAmount.toLocaleString()} to @${recipient.username}`, {
+      new_vending_balance: newMerchantVending
+    }));
+
+  } catch (error) {
+    console.error('Transfer vending balance error:', error);
+    res.status(500).json(formatResponse('error', 'Internal server error while transferring balance.'));
+  }
+};
+
 module.exports = {
   getDashboard,
   updateProfile,
@@ -731,5 +855,6 @@ module.exports = {
   getActivitySummary,
   applyForMerchant,
   getVendors,
-  getPublicSettings
+  getPublicSettings,
+  transferVendingBalance
 };

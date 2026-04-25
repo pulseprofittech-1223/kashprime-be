@@ -1,6 +1,7 @@
 const { supabaseAdmin } = require('../services/supabase.service');
 require("dotenv").config();
 const crypto = require('crypto');
+const axios = require('axios');
 const { logActivity } = require('../utils/activityLogger');
 
 const paystack = require('paystack')(process.env.PAYSTACK_SECRET_KEY);
@@ -10,7 +11,7 @@ class PaymentController {
   // Initialize payment with purpose (gaming, investment, upgrade)
   static async initializePayment(req, res) {
     try {
-      const { amount, email, purpose, plan_name } = req.body;
+      const { amount, email, purpose, plan_name, gateway = 'paystack' } = req.body;
       const userId = req.user.id;
 
       // Validation
@@ -40,7 +41,7 @@ class PaymentController {
       // Get user details
       const { data: user, error: userError } = await supabaseAdmin
         .from('users')
-        .select('email, user_tier, full_name')
+        .select('email, user_tier, full_name, username')
         .eq('id', userId)
         .single();
 
@@ -184,38 +185,56 @@ class PaymentController {
           : 'Pro tier upgrade'
       };
 
-      // Add investment-specific metadata
       if (purpose === 'investment' && investmentPlanConfig) {
         metadata.plan_name = investmentPlanConfig.plan_name;
         metadata.capital_amount = investmentPlanConfig.capital_amount;
         metadata.roi_percent = investmentPlanConfig.roi_percent;
       }
 
-      // Initialize payment with Paystack
-      const paymentData = {
-        email: email || user.email,
-        amount: amount * 100, // Convert to kobo
-        reference: reference,
-        callback_url: `${callbackUrls[purpose]}?reference=${reference}&amount=${amount}&purpose=${purpose}${plan_name ? `&plan=${plan_name}` : ''}`,
-        metadata: metadata
-      };
+      let responseData = { reference, purpose };
+      
+      if (gateway === 'paystack') {
+        const paymentData = {
+          email: email || user.email,
+          amount: amount * 100, // Convert to kobo
+          reference: reference,
+          callback_url: `${callbackUrls[purpose]}?reference=${reference}&amount=${amount}&purpose=${purpose}${plan_name ? `&plan=${plan_name}` : ''}`,
+          metadata: metadata
+        };
 
-      const initialization = await paystack.transaction.initialize(paymentData);
+        const initialization = await paystack.transaction.initialize(paymentData);
 
-      if (!initialization.status) {
+        if (!initialization.status) {
+          return res.status(400).json({
+            success: false,
+            message: 'Paystack initialization failed',
+            data: initialization
+          });
+        }
+
+        responseData.authorization_url = initialization.data.authorization_url;
+        responseData.access_code = initialization.data.access_code;
+      } 
+      else if (gateway === 'flutterwave') {
+        // Flutterwave initialization (mostly for redirection flow, though inline is used on FE)
+        // We still provide a reference and metadata
+        responseData.public_key = process.env.FLUTTERWAVE_PUBLIC_KEY;
+        responseData.customer = {
+          email: email || user.email,
+          name: user.full_name,
+          phonenumber: user.phone_number || ''
+        };
+        responseData.customizations = {
+          title: 'KashPrime',
+          description: metadata.description,
+          logo: 'https://www.kashprime.com/logo.png'
+        };
+      } else {
         return res.status(400).json({
           success: false,
-          message: 'Payment initialization failed',
-          data: initialization
+          message: 'Invalid payment gateway'
         });
       }
-
-      const responseData = {
-        authorization_url: initialization.data.authorization_url,
-        access_code: initialization.data.access_code,
-        reference: reference,
-        purpose: purpose
-      };
 
       // Add plan details to response for investment
       if (purpose === 'investment' && investmentPlanConfig) {
@@ -243,7 +262,7 @@ class PaymentController {
   // Verify payment and process based on purpose
   static async verifyPayment(req, res) {
     try {
-      const { reference, amount, purpose } = req.body;
+      const { reference, amount, purpose, gateway = 'paystack', flw_transaction_id } = req.body;
       const userId = req.user.id;
 
       // Validation
@@ -262,29 +281,90 @@ class PaymentController {
         });
       }
 
-      // 1. Verify payment with Paystack
-      const verification = await paystack.transaction.verify(reference);
+      let verificationData = null;
+      let paidAmount = 0;
 
-      if (!verification.status) {
-        return res.status(400).json({
-          success: false,
-          message: 'Payment verification failed',
-          data: verification.data
-        });
+      if (gateway === 'paystack') {
+        const verification = await paystack.transaction.verify(reference);
+        if (!verification.status) {
+          console.error(`[Verification] Paystack verification failed for ref: ${reference}`, verification);
+          return res.status(400).json({
+            success: false,
+            message: 'Paystack verification failed',
+            data: verification.data
+          });
+        }
+        verificationData = verification.data;
+        paidAmount = Number(verificationData.amount) / 100;
+      } 
+      else if (gateway === 'flutterwave') {
+        const idToVerify = flw_transaction_id;
+        console.log(`[Verification] Verifying Flutterwave ID: ${idToVerify}`);
+        
+        try {
+          // If we have an ID, use the direct ID verify endpoint
+          // If we only have a reference, we should use verify_by_reference
+          let verifyUrl = `https://api.flutterwave.com/v3/transactions/${idToVerify}/verify`;
+          
+          if (!idToVerify || idToVerify === reference) {
+             console.log(`[Verification] No transaction ID, using reference: ${reference}`);
+             verifyUrl = `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${reference}`;
+          }
+
+          const response = await axios.get(verifyUrl, {
+            headers: {
+              Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`
+            }
+          });
+
+          if (response.data.status !== 'success' || !response.data.data) {
+            console.error(`[Verification] Flutterwave API error for ref: ${reference}`, response.data);
+            return res.status(400).json({
+              success: false,
+              message: 'Flutterwave verification failed',
+              data: response.data
+            });
+          }
+
+          if (response.data.data.status !== 'successful' && response.data.data.status !== 'success' && response.data.data.status !== 'completed') {
+            console.warn(`[Verification] Flutterwave transaction not successful: ${response.data.data.status}`);
+            return res.status(400).json({
+              success: false,
+              message: `Transaction status is ${response.data.data.status}`,
+              status: response.data.data.status
+            });
+          }
+
+          verificationData = response.data.data;
+          // Follow Paystack pattern: ensure we have clear numeric amount
+          paidAmount = parseFloat(verificationData.amount || verificationData.charged_amount || 0);
+          
+          console.log(`[Verification] Flutterwave verification successful. Amount: ${paidAmount}`);
+          
+        } catch (flwError) {
+          console.error('[Verification] Flutterwave verify error:', flwError.response?.data || flwError.message);
+          return res.status(400).json({
+            success: false,
+            message: 'Flutterwave verification request failed',
+            error: flwError.response?.data || flwError.message
+          });
+        }
       }
 
-      // 2. Check if payment amount matches
-      const paidAmount = verification.data.amount / 100;
-      if (paidAmount !== parseFloat(amount)) {
+      console.log(`[Verification] Gateway: ${gateway}, Paid Amount: ${paidAmount}, Expected: ${amount}`);
+
+      // Check if payment amount matches
+      if (isNaN(paidAmount) || Math.abs(paidAmount - parseFloat(amount)) > 1) { 
+        console.warn(`[Verification] Amount mismatch or invalid: Paid ${paidAmount}, Expected ${amount}`);
         return res.status(400).json({
           success: false,
-          message: 'Amount mismatch',
+          message: 'Amount mismatch or invalid payment data',
           expected: amount,
           received: paidAmount
         });
       }
 
-      // 3. Check if transaction already exists
+      // Check if transaction already exists
       const { data: existingTransaction } = await supabaseAdmin
         .from('transactions')
         .select('id')
@@ -299,29 +379,30 @@ class PaymentController {
       }
 
       let responseData = {};
+      const gatewayName = gateway.charAt(0).toUpperCase() + gateway.slice(1);
 
-      // 4. Process based on purpose
+      // Process based on purpose
       if (purpose === 'gaming') {
-        responseData = await PaymentController.processGamingDeposit(userId, paidAmount, reference, verification.data);
+        responseData = await PaymentController.processGamingDeposit(userId, paidAmount, reference, verificationData, gatewayName);
 
       } else if (purpose === 'investment') {
-        responseData = await PaymentController.processInvestmentDeposit(userId, paidAmount, reference, verification.data);
+        responseData = await PaymentController.processInvestmentDeposit(userId, paidAmount, reference, verificationData, gatewayName);
 
       } else if (purpose === 'upgrade') {
-        responseData = await PaymentController.processUpgrade(userId, paidAmount, reference, verification.data);
+        responseData = await PaymentController.processUpgrade(userId, paidAmount, reference, verificationData, gatewayName);
       } else if (purpose === 'kash_ads') {
-        responseData = await PaymentController.processAdPayment(userId, paidAmount, reference, verification.data);
+        responseData = await PaymentController.processAdPayment(userId, paidAmount, reference, verificationData, gatewayName);
       }
 
-      // 5. Return success response
       res.json({
         success: true,
-        message: `${purpose.charAt(0).toUpperCase() + purpose.slice(1)} payment successful`,
+        message: `${purpose.charAt(0).toUpperCase() + purpose.slice(1)} payment successful via ${gatewayName}`,
         data: {
           ...responseData,
           transaction_reference: reference,
           amount: paidAmount,
           purpose: purpose,
+          gateway: gateway,
           timestamp: new Date().toISOString()
         }
       });
@@ -333,6 +414,121 @@ class PaymentController {
         message: error.message || 'Internal server error',
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
+    }
+  }
+
+  // Dedicated Flutterwave Verification
+  static async verifyFlutterwavePayment(req, res) {
+    try {
+      const { transaction_id, tx_ref, amount, purpose } = req.body;
+      const userId = req.user.id;
+
+      console.log(`[FLW Dedicated] Verifying ID: ${transaction_id}, Ref: ${tx_ref}`);
+
+      // 1. Verify with Flutterwave API
+      const response = await axios.get(`https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`, {
+        headers: {
+          Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`
+        }
+      });
+
+      if (response.data.status !== 'success' || !response.data.data) {
+        return res.status(400).json({
+          success: false,
+          message: 'Flutterwave verification failed',
+          data: response.data
+        });
+      }
+
+      const verificationData = response.data.data;
+      const paidAmount = parseFloat(verificationData.amount || 0);
+
+      // 2. Security Checks
+      if (verificationData.status !== 'successful' && verificationData.status !== 'success' && verificationData.status !== 'completed') {
+        return res.status(400).json({
+          success: false,
+          message: `Transaction is ${verificationData.status}`
+        });
+      }
+
+      if (Math.abs(paidAmount - parseFloat(amount)) > 1) {
+        return res.status(400).json({
+          success: false,
+          message: 'Amount mismatch',
+          expected: amount,
+          received: paidAmount
+        });
+      }
+
+      if (verificationData.tx_ref !== tx_ref) {
+        return res.status(400).json({
+          success: false,
+          message: 'Reference ID mismatch'
+        });
+      }
+
+      // 3. Check for double processing
+      const { data: existingTransaction } = await supabaseAdmin
+        .from('transactions')
+        .select('id')
+        .eq('reference', tx_ref)
+        .single();
+
+      if (existingTransaction) {
+        return res.status(400).json({
+          success: false,
+          message: 'Transaction already processed'
+        });
+      }
+
+      // 4. Process deposit based on purpose
+      let responseData = {};
+      
+      if (purpose === 'gaming') {
+        responseData = await PaymentController.processGamingDeposit(userId, paidAmount, tx_ref, verificationData, 'Flutterwave');
+      } else if (purpose === 'investment') {
+        responseData = await PaymentController.processInvestmentDeposit(userId, paidAmount, tx_ref, verificationData, 'Flutterwave');
+      } else if (purpose === 'upgrade') {
+        responseData = await PaymentController.processUpgrade(userId, paidAmount, tx_ref, verificationData, 'Flutterwave');
+      }
+
+      res.json({
+        success: true,
+        message: 'Payment verified successfully',
+        data: {
+          ...responseData,
+          reference: tx_ref,
+          amount: paidAmount
+        }
+      });
+
+    } catch (error) {
+      console.error('[FLW Dedicated] Error:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Internal server error'
+      });
+    }
+  }
+
+  static async getPublicSettings(req, res) {
+    try {
+      const { getSettings } = require('./settings.controller');
+      const settings = await getSettings();
+
+      res.json({
+        success: true,
+        data: {
+          paystack_enabled: settings['gateway_paystack_enabled'] === 'true',
+          flutterwave_enabled: settings['gateway_flutterwave_enabled'] === 'true'
+        }
+      });
+    } catch (error) {
+       console.error('Get public payment settings error:', error);
+       res.status(500).json({
+         success: false,
+         message: 'Failed to fetch payment settings'
+       });
     }
   }
 
@@ -375,15 +571,15 @@ class PaymentController {
 
       // 4. Process based on purpose (We only support gaming & upgrades for codes natively for now)
       if (purpose === 'gaming') {
-        responseData = await PaymentController.processGamingDeposit(userId, amount, reference, { method: 'code_redemption', code_id: depositCode.id });
+        responseData = await PaymentController.processGamingDeposit(userId, amount, reference, { method: 'code_redemption', code_id: depositCode.id }, 'Code');
       } else if (purpose === 'investment') {
          // Not fully supported natively via code unless plan passed, but mock it securely
         return res.status(400).json({ success: false, message: 'Investment via code is not directly supported without plan context.' });
       } else if (purpose === 'upgrade') {
-        responseData = await PaymentController.processUpgrade(userId, amount, reference, { method: 'code_redemption', code_id: depositCode.id });
+        responseData = await PaymentController.processUpgrade(userId, amount, reference, { method: 'code_redemption', code_id: depositCode.id }, 'Code');
       } else {
         // Assume default gaming funding if unknown
-        responseData = await PaymentController.processGamingDeposit(userId, amount, reference, { method: 'code_redemption', code_id: depositCode.id });
+        responseData = await PaymentController.processGamingDeposit(userId, amount, reference, { method: 'code_redemption', code_id: depositCode.id }, 'Code');
       }
 
       res.json({
@@ -403,38 +599,65 @@ class PaymentController {
   }
 
   // Process gaming deposit
-  static async processGamingDeposit(userId, paidAmount, reference, verificationData) {
-    const { data: currentWallet } = await supabaseAdmin
+  static async processGamingDeposit(userId, paidAmount, reference, verificationData, gatewayName = 'Paystack') {
+    // 1. Fetch current wallet with explicit error handling
+    const { data: wallet, error: fetchError } = await supabaseAdmin
       .from('wallets')
-      .select('games_balance')
+      .select('*')
       .eq('user_id', userId)
       .single();
 
-    const newBalance = parseFloat(currentWallet.games_balance || 0) + paidAmount;
+    if (fetchError) {
+      console.error('[Deposit] Error fetching wallet:', fetchError);
+      throw new Error(`Wallet record not found or inaccessible for user ${userId}`);
+    }
 
-    await supabaseAdmin
+    const currentBalance = parseFloat(wallet.games_balance || 0);
+    const depositAmount = parseFloat(paidAmount || 0);
+    const newBalance = currentBalance + depositAmount;
+
+    console.log(`[Deposit] User: ${userId}, Current: ${currentBalance}, Deposited: ${depositAmount}, New: ${newBalance}`);
+
+    // 2. Update wallet balance
+    const { error: walletError } = await supabaseAdmin
       .from('wallets')
       .update({
         games_balance: newBalance,
         updated_at: new Date().toISOString()
       })
-      .eq('user_id', userId);
+      .eq('id', wallet.id); // Use wallet ID for more precise update
 
-    // Record transaction
-    await supabaseAdmin
+    if (walletError) {
+      console.error('[Deposit] Wallet update error:', walletError);
+      throw new Error('Action failed: Could not update wallet balance');
+    }
+
+    // 3. Record transaction with full metadata
+    const { error: txError } = await supabaseAdmin
       .from('transactions')
       .insert({
         user_id: userId,
         transaction_type: 'deposit',
         balance_type: 'games_balance',
-        amount: paidAmount,
+        amount: depositAmount,
         currency: 'NGN',
         status: 'completed',
         reference: reference,
-        description: 'Gaming wallet funding via Paystack',
-        metadata: verificationData,
+        description: `Gaming wallet funding via ${gatewayName}`,
+        metadata: {
+          ...verificationData,
+          previous_balance: currentBalance,
+          new_balance: newBalance,
+          processed_at: new Date().toISOString()
+        },
         created_at: new Date().toISOString()
       });
+
+    if (txError) {
+      console.error('[Deposit] Transaction record error:', txError);
+      // We don't throw here to avoid failing the whole process after balance update, 
+      // but in a real system we should use transactions.
+    }
 
     // Fire-and-forget referral commission
     PaymentController.processReferralCommission(userId, paidAmount, reference);
@@ -443,7 +666,7 @@ class PaymentController {
     await logActivity(userId, 'deposit_complete', {
        amount: paidAmount,
        balance_type: 'games_balance',
-       before_balance: parseFloat(currentWallet.games_balance || 0),
+       before_balance: currentBalance,
        after_balance: newBalance,
        reference_id: reference,
        status: 'success'
@@ -456,7 +679,7 @@ class PaymentController {
   }
 
   // Process investment deposit and create investment
-  static async processInvestmentDeposit(userId, paidAmount, reference, verificationData) {
+  static async processInvestmentDeposit(userId, paidAmount, reference, verificationData, gatewayName = 'Paystack') {
     const metadata = verificationData.metadata;
     
     if (!metadata?.plan_name) {
@@ -552,7 +775,7 @@ class PaymentController {
         currency: 'NGN',
         status: 'completed',
         reference: reference,
-        description: `Investment deposit - ${planName.replace('_', '-')} plan (₦${capitalAmount.toLocaleString()})`,
+        description: `Investment deposit - ${planName.replace('_', '-')} plan (₦${capitalAmount.toLocaleString()}) via ${gatewayName}`,
         metadata: {
           ...verificationData,
           investment_id: investment.id,
@@ -594,7 +817,7 @@ class PaymentController {
 
   // Process Pro upgrade with referral reward
 // Process Pro upgrade with referral reward
-static async processUpgrade(userId, paidAmount, reference, verificationData) {
+static async processUpgrade(userId, paidAmount, reference, verificationData, gatewayName = 'Paystack') {
   // Get user with referrer info
   const { data: user } = await supabaseAdmin
     .from('users')
@@ -671,7 +894,7 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
       currency: 'NGN',
       status: 'completed',
       reference: reference,
-      description: 'Pro tier upgrade payment via Paystack',
+      description: `Pro tier upgrade payment via ${gatewayName}`,
       metadata: verificationData,
       created_at: new Date().toISOString()
     });
@@ -708,7 +931,7 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
 }
 
   // Process Kash Ads payment
-  static async processAdPayment(userId, paidAmount, reference, verificationData) {
+  static async processAdPayment(userId, paidAmount, reference, verificationData, gatewayName = 'Paystack') {
     // Record transaction for ad submission verification
     await supabaseAdmin
       .from('transactions')
@@ -720,7 +943,7 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
         currency: 'NGN',
         status: 'completed',
         reference: reference,
-        description: 'Kash Ads Campaign Payment via Paystack',
+        description: `Kash Ads Campaign Payment via ${gatewayName}`,
         metadata: verificationData,
         created_at: new Date().toISOString()
       });
@@ -1053,6 +1276,15 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
             updated_at: new Date().toISOString()
           })
           .eq('id', existingReferral.id);
+      } else {
+        await supabaseAdmin
+          .from('referrals')
+          .insert({
+            referrer_id: user.referred_by,
+            referred_id: userId,
+            reward_amount: commissionAmount,
+            status: 'active'
+          });
       }
 
       // Step 2: Credit referrer wallet
@@ -1082,8 +1314,8 @@ static async processUpgrade(userId, paidAmount, reference, verificationData) {
           amount: commissionAmount,
           currency: 'NGN',
           status: 'completed',
+          reference: `REF_COMMISSION_${Date.now()}_${Math.random().toString(36).substring(7)}`,
           description: `Referral commission - ${percent}% from ${user.username}'s deposit`,
-          source_user_id: userId,
           metadata: {
             referred_user_id: userId,
             deposit_reference: transactionReference,

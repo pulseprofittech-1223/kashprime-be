@@ -24,5 +24,6 @@ userRouter.get('/activity', validateActivityQuery, userController.getActivitySum
 userRouter.post('/merchant/apply', userController.applyForMerchant);
 userRouter.get('/vendors', userController.getVendors);
 userRouter.get('/settings', userController.getPublicSettings);
+userRouter.post('/merchant/transfer-vending', userController.transferVendingBalance);
 
-module.exports = userRouter;   
+module.exports = userRouter;

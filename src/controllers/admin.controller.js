@@ -2516,7 +2516,7 @@ const getMerchantAnalytics = async (req, res) => {
   try {
     const { data: merchants, error: merchantErr } = await supabaseAdmin
       .from('users')
-      .select('id, username, full_name, email, created_at, wallets(referral_balance, total_withdrawn_referral)')
+      .select('id, username, full_name, email, created_at, wallets(referral_balance, total_withdrawn_referral, vending_balance, total_loaded_vending, total_transferred_vending)')
       .in('role', ['merchant', 'vendor', 'super_vendor']);
 
     if (merchantErr) throw merchantErr;
@@ -2569,13 +2569,40 @@ const getMerchantAnalytics = async (req, res) => {
     const topRevenue = [...merchantStats].sort((a, b) => b.revenue - a.revenue)[0] || null;
     const topEngagement = [...merchantStats].sort((a, b) => b.active_rate - a.active_rate)[0] || null;
 
+    let global_total_loaded_vending = 0;
+    let global_total_transferred_vending = 0;
+
+    merchants.forEach(m => {
+      const w = Array.isArray(m.wallets) ? m.wallets[0] : m.wallets;
+      if (w) {
+        global_total_loaded_vending += parseFloat(w.total_loaded_vending || 0);
+        global_total_transferred_vending += parseFloat(w.total_transferred_vending || 0);
+      }
+    });
+
+    const topVending = [...merchants]
+      .map(m => {
+        const w = Array.isArray(m.wallets) ? m.wallets[0] : m.wallets;
+        return {
+          id: m.id,
+          username: m.username,
+          vending_balance: parseFloat(w?.vending_balance || 0),
+          total_loaded: parseFloat(w?.total_loaded_vending || 0)
+        }
+      })
+      .sort((a, b) => b.vending_balance - a.vending_balance)
+      .slice(0, 5);
+
     return res.status(200).json({
       status: 'success',
       data: {
         total_merchants: totalMerchants,
         top_referrer: topReferrer,
         top_revenue: topRevenue,
-        top_engagement: topEngagement
+        top_engagement: topEngagement,
+        global_total_loaded_vending,
+        global_total_transferred_vending,
+        top_vending_balances: topVending
       }
     });
   } catch (error) {
@@ -2592,7 +2619,7 @@ const getMerchantsList = async (req, res) => {
     // Get merchants with wallets
     let query = supabaseAdmin
       .from('users')
-      .select('id, username, full_name, email, account_status, created_at, wallets(referral_balance, total_withdrawn_referral)', { count: 'exact' })
+      .select('id, username, full_name, email, account_status, created_at, wallets(referral_balance, total_withdrawn_referral, vending_balance)', { count: 'exact' })
       .in('role', ['merchant', 'vendor', 'super_vendor']);
 
     if (search) {
@@ -2910,6 +2937,90 @@ const getMerchantDetail = async (req, res) => {
   }
 };
 
+const loadVendingBalance = async (req, res) => {
+  try {
+    const { merchantId } = req.params;
+    const { amount } = req.body;
+
+    if (!amount || isNaN(amount) || amount <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Valid amount is required.' });
+    }
+
+    // Verify merchant
+    const { data: merchant, error: merchantErr } = await supabaseAdmin
+      .from('users')
+      .select('id, username, role')
+      .eq('id', merchantId)
+      .single();
+
+    if (merchantErr || !merchant) {
+      return res.status(404).json({ status: 'error', message: 'Merchant not found.' });
+    }
+
+    // Update wallet
+    const { data: wallet, error: walletErr } = await supabaseAdmin
+      .from('wallets')
+      .select('id, vending_balance, total_loaded_vending')
+      .eq('user_id', merchantId)
+      .single();
+
+    if (walletErr || !wallet) {
+      return res.status(500).json({ status: 'error', message: 'Merchant wallet not found.' });
+    }
+
+    const newVendingBalance = parseFloat(wallet.vending_balance || 0) + parseFloat(amount);
+    const newTotalLoaded = parseFloat(wallet.total_loaded_vending || 0) + parseFloat(amount);
+
+    const { error: updateErr } = await supabaseAdmin
+      .from('wallets')
+      .update({
+        vending_balance: newVendingBalance,
+        total_loaded_vending: newTotalLoaded
+      })
+      .eq('user_id', merchantId);
+
+    if (updateErr) throw updateErr;
+
+    // Log transaction
+    await supabaseAdmin
+      .from('transactions')
+      .insert({
+        user_id: merchantId,
+        amount: amount,
+        currency: 'NGN',
+        transaction_type: 'deposit',
+        status: 'completed',
+        description: `Admin loaded vending balance to ${merchant.username}`,
+        reference: `VEND-LD-${Date.now()}`,
+        balance_type: 'vending_balance',
+        metadata: { loaded_by: req.user.id }
+      });
+      
+    // Log admin activity
+    await supabaseAdmin
+      .from('admin_activities')
+      .insert({
+        admin_id: req.user.id,
+        activity_type: 'vending_balance_loaded',
+        description: `Loaded ₦${parseFloat(amount).toLocaleString()} vending balance to @${merchant.username}`,
+        metadata: { merchant_id: merchantId, amount: parseFloat(amount) }
+      });
+
+    return res.status(200).json({
+      status: 'success',
+      message: `Successfully loaded ₦${parseFloat(amount).toLocaleString()} to merchant vending balance.`,
+      data: {
+        new_vending_balance: newVendingBalance
+      }
+    });
+
+  } catch (error) {
+    console.error('Load vending balance error:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error while loading balance.' });
+  }
+};
+
+
 module.exports = {
   getAllUsers,
   getUserDetails,
@@ -2939,5 +3050,7 @@ module.exports = {
   getMerchantAnalytics,
   getMerchantsList,
   getMerchantCodeAnalytics,
-  getMerchantDetail
+  getMerchantDetail,
+  loadVendingBalance
 };
+
